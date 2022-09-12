@@ -476,17 +476,10 @@ unittest() {
 /**
  * vector update macros
  */
-//#define _calc_next_size(_sp, _ep, _nt) ({ \
-//	size_t forefront_arr_size = dz_roundup(sizeof(struct dz_forefront_s *) * (_nt), sizeof(__m128i)); \
-//	size_t est_column_size = 2 * ((_ep) - (_sp)) * sizeof(struct dz_swgv_s); \
-//	size_t next_req = forefront_arr_size + est_column_size + sizeof(struct dz_cap_s); \
-//	/* debug("est_column_size(%lu), next_req(%lu)", est_column_size, next_req); */ \
-//	next_req; \
-//})
 #define _init_cap(_adj, _rch, _forefronts, _n_forefronts) ({ \
 	/* push forefront pointers */ \
 	size_t forefront_arr_size = dz_roundup(sizeof(struct dz_forefront_s *) * (_n_forefronts), sizeof(__m128i)); \
-    struct dz_forefront_s const **dst = (struct dz_forefront_s const **)(dz_mem_malloc(dz_mem(self), forefront_arr_size) + forefront_arr_size); \
+    struct dz_forefront_s const **dst = (struct dz_forefront_s const **)(((uint8_t *)dz_mem_malloc(dz_mem(self), forefront_arr_size)) + forefront_arr_size); \
 	struct dz_forefront_s const **src = (struct dz_forefront_s const **)(_forefronts); \
 	for(size_t i = 0; i < (_n_forefronts); i++) { dst[-((int64_t)(_n_forefronts)) + i] = src[i]; } \
 	/* push head-cap info */ \
@@ -502,7 +495,7 @@ unittest() {
 	/* push head-cap */ \
 	struct dz_cap_s *cap = _init_cap(_adj, 0xff, _forefronts, _n_forefronts); \
 	/* return array pointer */ \
-    (struct dz_swgv_s *) chdp_alloc = dz_mem_malloc(dz_mem(self), ((_epos) - (_spos)) * sizeof(struct dz_swgv_s)); \
+    struct dz_swgv_s *chdp_alloc = (struct dz_swgv_s *)dz_mem_malloc(dz_mem(self), ((_epos) - (_spos)) * sizeof(struct dz_swgv_s)); \
     chdp_alloc - (_spos); \
 })
 #define _begin_column(_w, _rch, _rlen) ({ \
@@ -513,12 +506,12 @@ unittest() {
 	cap->rrem = (_rlen);						/* record rlen for use in traceback */ \
 	debug("create column(%p), [%u, %u), span(%u), rrem(%ld), max(%d), inc(%d)", cap, (_w).fr.spos, (_w).fr.epos, (_w).r.epos - (_w).r.spos, (_rlen), (_w).max, (_w).inc); \
 	/* return array pointer */ \
-    (struct dz_swgv_s *)cdp_alloc = dz_mem_malloc(dz_mem(self), ((_w).fr.epos - (_w).fr.spos) * sizeof(struct dz_swgv_s)); \
+    struct dz_swgv_s *cdp_alloc = (struct dz_swgv_s *)dz_mem_malloc(dz_mem(self), ((_w).fr.epos - (_w).fr.spos) * sizeof(struct dz_swgv_s)); \
     cdp_alloc - (_w).fr.spos; \
 })
 #define _end_column(_p, _spos, _epos) ({ \
 	/* write back the stack pointer and return a cap */ \
-    (struct dz_cap_s *) eccap = (struct dz_cap_s *) dz_mem_malloc(dz_mem(self), sizeof(struct dz_cap_s));\
+    struct dz_cap_s *eccap = (struct dz_cap_s *) dz_mem_malloc(dz_mem(self), sizeof(struct dz_cap_s));\
 	struct dz_range_s *r = dz_range(eccap); \
 	debug("create range(%p), [%u, %u)", r, (_spos), (_epos)); \
 	r->spos = (_spos); r->epos = (_epos); \
