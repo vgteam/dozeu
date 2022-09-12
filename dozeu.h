@@ -317,7 +317,7 @@ void *dz_malloc(
 
 	/* roundup to align boundary, add margin at the head and forefront */
 	size = dz_roundup(size, DZ_MEM_ALIGN_SIZE);
-	if(posix_memalign(&ptr, DZ_MEM_ALIGN_SIZE, size + 2 * DZ_MEM_MARGIN_SIZE) != 0) {
+	if(dz_unlikely(posix_memalign(&ptr, DZ_MEM_ALIGN_SIZE, size + 2 * DZ_MEM_MARGIN_SIZE) != 0)) {
 		debug("posix_memalign failed");
 		dz_trap(); return(NULL);
 	}
@@ -375,7 +375,7 @@ struct dz_mem_s *dz_mem_init(
 {
 	size = dz_max2(DZ_MEM_INIT_SIZE, sizeof(struct dz_mem_s) + dz_roundup(size, DZ_MEM_ALIGN_SIZE));
 	struct dz_mem_s *mem = (struct dz_mem_s *)dz_malloc(size);
-	if(mem == NULL) {
+	if(dz_unlikely(mem == NULL)) {
 		debug("failed to malloc memory");
 		return(NULL);
 	}
@@ -407,7 +407,7 @@ uint64_t dz_mem_add_stack(
     debug("add_stack, ptr(%p)", mem->stack.curr->next);
 	if(mem->stack.curr->next == NULL
        || dz_unlikely(mem->stack.curr->next->size < size + dz_roundup(sizeof(struct dz_mem_block_s), DZ_MEM_ALIGN_SIZE))) {
-        if (mem->stack.curr->next != NULL) {
+        if (dz_unlikely(mem->stack.curr->next != NULL)) {
             /* didn't allocate enough memory earlier, throw out all subsequent blocks so we can start again bigger */
             struct dz_mem_block_s *blk = mem->stack.curr->next;
             while (blk != NULL) {
@@ -417,16 +417,20 @@ uint64_t dz_mem_add_stack(
             }
             mem->stack.curr->next = NULL;
         }
-		/* current stack is the forefront of the memory block chain, add new block */
+        // TODO: maybe we should double size as well, just to avoid thrashing if there are many allocations of
+        // a similar just-too-large size...
+		/* current stack is the forefront of the memory block list, add new block */
 		size = dz_max2(
 			size + dz_roundup(sizeof(struct dz_mem_block_s), DZ_MEM_ALIGN_SIZE),
 			2 * mem->stack.curr->size
 		);
 		struct dz_mem_block_s *blk = (struct dz_mem_block_s *)dz_malloc(size);
         debug("malloc called, blk(%p)", blk);
-		if(blk == NULL) { return(1); }
+		if (dz_unlikely(blk == NULL)) {
+            return(1);
+        }
 
-		/* link new node to the forefront of the current chain */
+		/* link new node to the forefront of the current list */
 		mem->stack.curr->next = blk;
 
 		/* initialize the new memory block */
@@ -444,11 +448,7 @@ void *dz_mem_malloc(
 	struct dz_mem_s *mem,
 	size_t size)
 {
-    // TODO: this doesn't seem to check to make sure the size allocated is big enough...
-    // also, where does 4096 come from?
-    // also, don't we need to provide the size to ensure that a large enough block is allocated?
-	//if(dz_mem_stack_rem(mem) < 4096) { dz_mem_add_stack(mem, 0); }
-    if(dz_mem_stack_rem(mem) < size) {
+    if(dz_unlikely(dz_mem_stack_rem(mem) < size)) {
         dz_mem_add_stack(mem, size);
     }
 	void *ptr = (void *)mem->stack.top;
@@ -476,21 +476,21 @@ unittest() {
 /**
  * vector update macros
  */
-#define _calc_next_size(_sp, _ep, _nt) ({ \
-	size_t forefront_arr_size = dz_roundup(sizeof(struct dz_forefront_s *) * (_nt), sizeof(__m128i)); \
-	size_t est_column_size = 2 * ((_ep) - (_sp)) * sizeof(struct dz_swgv_s); \
-	size_t next_req = forefront_arr_size + est_column_size + sizeof(struct dz_cap_s); \
-	/* debug("est_column_size(%lu), next_req(%lu)", est_column_size, next_req); */ \
-	next_req; \
-})
+//#define _calc_next_size(_sp, _ep, _nt) ({ \
+//	size_t forefront_arr_size = dz_roundup(sizeof(struct dz_forefront_s *) * (_nt), sizeof(__m128i)); \
+//	size_t est_column_size = 2 * ((_ep) - (_sp)) * sizeof(struct dz_swgv_s); \
+//	size_t next_req = forefront_arr_size + est_column_size + sizeof(struct dz_cap_s); \
+//	/* debug("est_column_size(%lu), next_req(%lu)", est_column_size, next_req); */ \
+//	next_req; \
+//})
 #define _init_cap(_adj, _rch, _forefronts, _n_forefronts) ({ \
 	/* push forefront pointers */ \
 	size_t forefront_arr_size = dz_roundup(sizeof(struct dz_forefront_s *) * (_n_forefronts), sizeof(__m128i)); \
-	struct dz_forefront_s const **dst = (struct dz_forefront_s const **)(dz_mem(self)->stack.top + forefront_arr_size); \
+    struct dz_forefront_s const **dst = (struct dz_forefront_s const **)(dz_mem_malloc(dz_mem(self), forefront_arr_size) + forefront_arr_size); \
 	struct dz_forefront_s const **src = (struct dz_forefront_s const **)(_forefronts); \
 	for(size_t i = 0; i < (_n_forefronts); i++) { dst[-((int64_t)(_n_forefronts)) + i] = src[i]; } \
 	/* push head-cap info */ \
-	struct dz_head_s *_head = (struct dz_head_s *)dst; \
+    struct dz_head_s *_head = (struct dz_head_s *)dz_mem_malloc(dz_mem(self), dz_max2(sizeof(struct dz_cap_s), sizeof(struct dz_head_s))); \
 	(_head)->r.spos = (_adj);					/* save merging adjustment */ \
 	(_head)->r.epos = 0;						/* head marked as zero */ \
 	(_head)->rch = (_rch);						/* rch for the first column */ \
@@ -499,43 +499,34 @@ unittest() {
 	dz_cap(_head); \
 })
 #define _begin_column_head(_spos, _epos, _adj, _forefronts, _n_forefronts) ({ \
-	/* calculate sizes */ \
-	size_t next_req = _calc_next_size(_spos, _epos, _n_forefronts); \
-	/* allocate from heap */  \
-    if(dz_mem_stack_rem(dz_mem(self)) < next_req) { dz_mem_add_stack(dz_mem(self), next_req); } /* 0); }*/ \
 	/* push head-cap */ \
 	struct dz_cap_s *cap = _init_cap(_adj, 0xff, _forefronts, _n_forefronts); \
 	/* return array pointer */ \
-	(struct dz_swgv_s *)(cap + 1) - (_spos); \
+    (struct dz_swgv_s *) chdp_alloc = dz_mem_malloc(dz_mem(self), ((_epos) - (_spos)) * sizeof(struct dz_swgv_s)); \
+    chdp_alloc - (_spos); \
 })
 #define _begin_column(_w, _rch, _rlen) ({ \
 	/* push cap info */ \
-	struct dz_cap_s *cap = dz_cap(dz_mem(self)->stack.top); \
-	/* calculate sizes */ \
-	size_t next_req = _calc_next_size((_w).fr.spos, (_w).fr.epos, 0); \
+	struct dz_cap_s *cap = (struct dz_cap_s *)dz_mem_malloc(dz_mem(self), sizeof(struct dz_cap_s)); \
 	/* allocate from heap */ \
 	cap->rch = (_rch);							/* record rch for the next column */ \
 	cap->rrem = (_rlen);						/* record rlen for use in traceback */ \
-	if(dz_likely(dz_mem_stack_rem(dz_mem(self)) < next_req)) { \
-        /* TODO: editing to make sure we ask for enough memory */ \
-		dz_mem_add_stack(dz_mem(self), next_req); /* 0); }*/ \
-		cap = _init_cap(0, _rch, &cap, 1); \
-	} \
 	debug("create column(%p), [%u, %u), span(%u), rrem(%ld), max(%d), inc(%d)", cap, (_w).fr.spos, (_w).fr.epos, (_w).r.epos - (_w).r.spos, (_rlen), (_w).max, (_w).inc); \
 	/* return array pointer */ \
-	(struct dz_swgv_s *)(cap + 1) - (_w).fr.spos; \
+    (struct dz_swgv_s *)cdp_alloc = dz_mem_malloc(dz_mem(self), ((_w).fr.epos - (_w).fr.spos) * sizeof(struct dz_swgv_s)); \
+    cdp_alloc - (_w).fr.spos; \
 })
 #define _end_column(_p, _spos, _epos) ({ \
 	/* write back the stack pointer and return a cap */ \
-	struct dz_range_s *r = dz_range(&dz_swgv(_p)[(_epos)]); \
+    (struct dz_cap_s *) eccap = (struct dz_cap_s *) dz_mem_malloc(dz_mem(self), sizeof(struct dz_cap_s));\
+	struct dz_range_s *r = dz_range(eccap); \
 	debug("create range(%p), [%u, %u)", r, (_spos), (_epos)); \
-	dz_mem(self)->stack.top = (uint8_t *)r; \
 	r->spos = (_spos); r->epos = (_epos); \
-	(struct dz_cap_s *)r; \
+    eccap; \
 })
 #define _end_matrix(_p, _wp, _rrem) ({ \
 	/* create forefront object */ \
-	struct dz_forefront_s *forefront = dz_forefront(&(dz_swgv(_p))[(_wp)->r.epos]); \
+    struct dz_forefront_s *forefront = (struct dz_forefront_s *)dz_mem_malloc(dz_mem(self), sizeof(struct dz_forefront_s)); \
 	forefront->rid = (_wp)->rid; \
 	forefront->rlen = (_wp)->rlen; \
     forefront->fr = (_wp)->fr; \
@@ -546,8 +537,6 @@ unittest() {
 	forefront->query = (_wp)->query; \
 	forefront->mcap = (_wp)->mcap; \
 	debug("create forefront(%p), [%u, %u), [%u, %u), max(%d), inc(%d), rlen(%d), query(%p), rrem(%d)", forefront, (_wp)->r.spos, (_wp)->r.epos, (_wp)->fr.spos, (_wp)->fr.epos, (_wp)->max, (_wp)->inc, (int32_t)(_wp)->rlen, (_wp)->query, (int32_t)(_rrem)); \
-	/* write back stack pointer */ \
-	dz_mem(self)->stack.top = (uint8_t *)(forefront + 1); \
 	/* return the forefront pointer */ \
 	(struct dz_forefront_s const *)forefront; \
 })
@@ -781,6 +770,7 @@ struct dz_s *dz_init_intl(
     
     // precompute the end-cap, which will always live next to the dz_s in this mem block
     struct dz_cap_s *cap = _init_cap(0, 0xff, NULL, 0);
+    
     
 	return(self);
 }
