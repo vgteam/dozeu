@@ -44,16 +44,16 @@ int main(int argc, char *argv[])
 	};
 	struct dz_s *dz = dz_init(
 		score_matrix,
-		GI, GE,
-		xdrop_threshold,
-		full_length_bonus
+		GI, GE
 	);
+    // TODO: does xdrop_threshold go in anymore?
 
 	/* pack query */
 	char const *query = "ACACTTCTAGACTTTACCACTA";
 	struct dz_query_s const *q = dz_pack_query_forward(
 	    dz,
 	    query,						/* char const *seq: query sequence */
+        full_length_bonus,
 	    strlen(query)				/* length */
 	);
 

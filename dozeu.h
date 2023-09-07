@@ -216,6 +216,8 @@ struct dz_forefront_s {
 	struct dz_query_s const *query;
 	struct dz_cap_s const *mcap;
 };
+// When initializing forefronts, we want to be able to fill in the pad without saying 0s everywhere.
+#define DZ_FOREFRONT_PAD {0, 0, 0, 0, 0, 0, 0, 0}
 struct dz_alignment_init_s {
     struct dz_forefront_s const *root;
     uint16_t xt;
@@ -849,7 +851,7 @@ struct dz_alignment_init_s dz_align_init(
     size_t const L = sizeof(__m128i) / sizeof(uint16_t);
     size_t max_gap_vec_len = dz_roundup(max_gap_len, L) / L;
     
-    struct dz_forefront_s w = { { 0, (uint32_t) max_gap_vec_len}, 0, 0, { 0, (uint32_t) max_gap_vec_len}, 0, 0, 0, 0, NULL, NULL };
+    struct dz_forefront_s w = { { 0, (uint32_t) max_gap_vec_len}, 0, 0, { 0, (uint32_t) max_gap_vec_len}, 0, 0, 0, 0, DZ_FOREFRONT_PAD, NULL, NULL };
     struct dz_forefront_s *a = &w;
     
     /* malloc the first column */
@@ -882,7 +884,7 @@ struct dz_alignment_init_s dz_align_init(
     _end_column(dp, w.r.spos, w.r.epos);
     
     /* package forefront and xt, return */
-    dz_alignment_init_s aln_init;
+    struct dz_alignment_init_s aln_init;
     aln_init.root = _end_matrix(dp, &w, 0);
     aln_init.xt = xt;
     return(aln_init);
@@ -918,7 +920,7 @@ void dz_flush(
     #ifdef DZ_QUAL_ADJ
         bottom = (void *)(((int8_t *)bottom) + 2 * DZ_QUAL_MATRIX_SIZE);
     #endif
-    bottom = (void *)(((dz_cap_s *)bottom) + 1);
+    bottom = (void *)(((struct dz_cap_s *)bottom) + 1);
     
 	dz_mem(self)->stack.top = (uint8_t *)bottom;
 	return;
@@ -1543,7 +1545,7 @@ struct dz_forefront_s const *dz_extend_intl(
 	__m128i const gev4 = _mm_slli_epi16(gev1, 2);
 	__m128i const gev8 = _mm_slli_epi16(gev1, 3);
 
-    struct dz_forefront_s w = { { UINT32_MAX, 0 }, 0, 0, { UINT32_MAX, 0 }, 0, 0, 0, 0, NULL, NULL };	/* uint32_t spos, epos, max, inc; struct dz_query_s const *query; struct dz_cap_s const *cap; */
+    struct dz_forefront_s w = { { UINT32_MAX, 0 }, 0, 0, { UINT32_MAX, 0 }, 0, 0, 0, 0, DZ_FOREFRONT_PAD, NULL, NULL };	/* uint32_t spos, epos, max, inc; uint8_t _pad[8]; struct dz_query_s const *query; struct dz_cap_s const *cap; */
 	w.rlen = rlen;
 	w.rid = rid;
 	w.query = query;
@@ -1642,7 +1644,7 @@ unittest( "extend.base" ) {
 		ut_assert(forefront == NULL);
 		forefront = dz_extend(dz, q, NULL, 0, "", 0, 2, 0);
 		ut_assert(forefront == NULL);
-        dz_alignment_init_s aln_init = dz_align_init(dz, DZ_UNITTEST_MAX_GAP_LEN);
+        struct dz_alignment_init_s aln_init = dz_align_init(dz, DZ_UNITTEST_MAX_GAP_LEN);
 		forefront = dz_extend(dz, q, &aln_init.root, 1, "", 0, 3, aln_init.xt);
 		ut_assert(forefront == aln_init.root);
 
@@ -1702,7 +1704,7 @@ unittest( "extend.base.revcomp" ) {
 		ut_assert(forefront == NULL);
 		forefront = dz_extend(dz, q, NULL, 0, "", 0, 2, 0);
 		ut_assert(forefront == NULL);
-        dz_alignment_init_s aln_init = dz_align_init(dz, DZ_UNITTEST_MAX_GAP_LEN);
+        struct dz_alignment_init_s aln_init = dz_align_init(dz, DZ_UNITTEST_MAX_GAP_LEN);
 		forefront = dz_extend(dz, q, &aln_init.root, 1, "", 0, 3, aln_init.xt);
 		ut_assert(forefront == aln_init.root);
 
@@ -1759,7 +1761,7 @@ unittest( "extend.small" ) {
 		 *   \ /    \    /
 		 *    C      CATT
 		 */
-        dz_alignment_init_s aln_init = dz_align_init(dz, DZ_UNITTEST_MAX_GAP_LEN);
+        struct dz_alignment_init_s aln_init = dz_align_init(dz, DZ_UNITTEST_MAX_GAP_LEN);
 		forefronts[0] = dz_extend(dz, q, &aln_init.root, 1, dz_ut_sel("AG", "\x0\x2", "MA"), 2, 1, aln_init.xt);
 		ut_assert(forefronts[0] != NULL && forefronts[0]->max == dz_ut_sel(4, 4, 9));
 
@@ -2042,7 +2044,7 @@ unittest( "trace" ) {
 	struct dz_forefront_s const *forefront = NULL;
 	struct dz_alignment_s *aln = NULL;
 
-    dz_alignment_init_s aln_init = dz_align_init(dz, DZ_UNITTEST_MAX_GAP_LEN);
+    struct dz_alignment_init_s aln_init = dz_align_init(dz, DZ_UNITTEST_MAX_GAP_LEN);
 	forefront = dz_extend(dz, q, &aln_init.root, 1, "A", 1, 1, aln_init.xt);
 	aln = dz_trace(dz, forefront);
 
