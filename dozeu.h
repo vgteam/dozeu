@@ -702,7 +702,9 @@ void *dz_mem_stream_right_alloc(
 	if(ptr == NULL) {
 		return ptr;
 	}
-	return (void*)((uint8_t*)ptr + (alloc_size - data_size));
+	void* right_aligned_ptr = (void*)((uint8_t*)ptr + (alloc_size - data_size));
+	debug("Allocate %lu items of %lu bytes each padded to %lu: block %p and right-aligned array %p", items, size, alignment, ptr, right_aligned_ptr);
+	return right_aligned_ptr;
 }
                      
 #endif // DZ_INCLUDE_ONCE
@@ -750,7 +752,7 @@ unittest() {
 	struct dz_forefront_s const **src = (struct dz_forefront_s const **)(_forefronts); \
 	for(size_t i = 0; i < (_n_forefronts); i++) { dst[i] = src[i]; } \
 	/* push head-cap info */ \
-	struct dz_head_s *_head = (struct dz_head_s *)(dst + ((int64_t)(_n_forefronts))); \
+	struct dz_head_s *_head = (struct dz_head_s *)(dz_mem_stream_alloc(dz_mem(self), sizeof(struct dz_head_s))); \
 	(_head)->r.spos = (_adj);					/* save merging adjustment */ \
 	(_head)->r.epos = 0;						/* head marked as zero */ \
 	(_head)->rch = (_rch);						/* rch for the first column */ \
@@ -781,6 +783,9 @@ unittest() {
 	/* return array pointer */ \
 	slice_data - (_spos); \
 })
+
+#define _unwind_cap(_c)				( dz_ccap(dz_cswgv(_c) - (_c)->r.epos + (_c)->r.spos) - 1 )
+
 /*
  * Fill in a terminating cap for the most recent column passed to _end_column,
  * using the range information in the current active allocation.
@@ -805,12 +810,13 @@ unittest() {
 	size_t next_req_here = _calc_next_size((_w).fr.spos, (_w).fr.epos, 0); \
 	if(dz_likely(dz_mem_stream_remaining(dz_mem(self)) < next_req_here)) { \
 		/* Next column will not fit here. */ \
+		debug("create internal bridge"); \
 		size_t next_req_split = _calc_next_size((_w).fr.spos, (_w).fr.epos, 1); \
         /* We start a new head column with the previous column's cap pointed to as if it were a forefront. */ \
 		dz_mem_stream_reserve(dz_mem(self), next_req_split); \
 		cap = _init_cap(0, _rch, &cap, 1); \
 	} \
-	debug("create column(%p), [%u, %u), span(%u), rrem(%ld), max(%d), inc(%d)", cap, (_w).fr.spos, (_w).fr.epos, (_w).r.epos - (_w).r.spos, (_rlen), (_w).max, (_w).inc); \
+	debug("create column(%p) pcap(%p), [%u, %u), span(%u), rrem(%ld), max(%d), inc(%d)", cap, _unwind_cap(cap), (_w).fr.spos, (_w).fr.epos, (_w).r.epos - (_w).r.spos, (_rlen), (_w).max, (_w).inc); \
 	/* start array slice allocation */ \
 	struct dz_swgv_s *slice_data = dz_swgv(dz_mem_stream_alloc_begin(dz_mem(self), _calc_max_slice_size((_w).fr.spos, (_w).fr.epos))); \
 	/* return array pointer */ \
