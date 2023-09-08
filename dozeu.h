@@ -597,6 +597,10 @@ unittest() {
 /**
  * vector update macros
  */
+
+/*
+ * Determine how many bytes are needed to store forefront pointers, the cap, and a column vector.
+ */
 #define _calc_next_size(_sp, _ep, _nt) ({ \
 	size_t forefront_arr_size = dz_roundup(sizeof(struct dz_forefront_s *) * (_nt), sizeof(__m128i)); \
 	size_t est_column_size = 2 * ((_ep) - (_sp)) * sizeof(struct dz_swgv_s); \
@@ -623,7 +627,16 @@ unittest() {
 	dz_cap(_head); \
 })
 /*
- * Reserve space for a column and put a cap */
+ * Reserve space for the forefront pointers, head cap, and column vector, in
+ * that order.
+ *
+ * Return the slice array address, for which the _spos to _epos range
+ * corresponds to the column vector.
+ *
+ * The returned pointer must be passed to _end_column() before _begin_column()
+ * can be called. The final column's slice array address must be passed to
+ * _end_matrix() before the arena can be used again for something else.
+ */
 #define _begin_column_head(_spos, _epos, _adj, _forefronts, _n_forefronts) ({ \
 	/* calculate sizes */ \
 	size_t next_req = _calc_next_size(_spos, _epos, _n_forefronts); \
@@ -634,6 +647,19 @@ unittest() {
 	/* return array pointer */ \
 	(struct dz_swgv_s *)(cap + 1) - (_spos); \
 })
+/*
+ * Fill in a terminating cap for the most recent column passed to _end_column.
+ * Either immediately after it or in a new contiguous run of memory, reserve
+ * space for a new column. If the new column is not immediately after the old
+ * column, copy a (fake?) version of the old column's cap to be before it.
+ *
+ * Return the slice array address, for which the _spos to _epos range
+ * corresponds to the column vector.
+ *
+ * The returned pointer must be passed to _end_column() before another column
+ * can be begin, and the last column must be passed to _end_matrix() before the
+ * arena can be used again.
+ */
 #define _begin_column(_w, _rch, _rlen) ({ \
 	/* push cap info */ \
 	struct dz_cap_s *cap = dz_cap(dz_mem(self)->stack.top); \
@@ -651,6 +677,18 @@ unittest() {
 	/* return array pointer */ \
 	(struct dz_swgv_s *)(cap + 1) - (_w).fr.spos; \
 })
+/*
+ * Given the slice array address for a column begun with _begin_column() or
+ * _begin_column_head(), finish the column, and allow the allocator to be used
+ * again.
+ *
+ * Note that we have actually used the _spos to _epos part of the column's
+ * vector, and save range data after that vector recording the range its slice
+ * covers.
+ *
+ * Returns the address of the filled-in range, which it leaves just above the
+ * allocator stack.
+ */
 #define _end_column(_p, _spos, _epos) ({ \
 	/* write back the stack pointer and return a cap */ \
 	struct dz_range_s *r = dz_range(&dz_swgv(_p)[(_epos)]); \
@@ -659,6 +697,13 @@ unittest() {
 	r->spos = (_spos); r->epos = (_epos); \
 	(struct dz_cap_s *)r; \
 })
+/* 
+ * Given the slice array address of the final column, which has been ended (so
+ * its filled-in range is above the allocator stack), turn that filled-in range
+ * into a full forefront on top of the allocator stack.
+ *
+ * After calling this, the arena can be used again.
+ */
 #define _end_matrix(_p, _wp, _rrem) ({ \
 	/* create forefront object */ \
 	struct dz_forefront_s *forefront = dz_forefront(&(dz_swgv(_p))[(_wp)->r.epos]); \
