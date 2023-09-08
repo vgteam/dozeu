@@ -525,16 +525,47 @@ void *dz_mem_malloc(
 	 */
 	size = dz_roundup(size, sizeof(__m128i));
 
-    // TODO: this doesn't seem to check to make sure the size allocated is big enough...
-    // also, where does 4096 come from?
-    // also, don't we need to provide the size to ensure that a large enough block is allocated?
-	//if(dz_mem_stack_rem(mem) < 4096) { dz_mem_add_stack(mem, 0); }
     if(dz_mem_stack_rem(mem) < size) {
         if(dz_mem_add_stack(mem, size)) {
 			/* Report a failed allocation. */
 			return NULL;
 		}
     }
+	void *ptr = (void *)mem->stack.top;
+	mem->stack.top += size;
+    return(ptr);
+}
+
+/*
+ * Prepare a contiguous run of memory from an arena.
+ *
+ * Returns 0 if successful, and 1 on failure.
+ */
+static __dz_force_inline
+uint64_t dz_mem_run(
+	struct dz_mem_s *mem,
+	size_t size)
+{
+	/* We cheat and just use a whole block as a run. */
+	if(dz_mem_stack_rem(mem) < size) {
+		return dz_mem_add_stack(mem, size);
+	}
+	return 0;
+}
+
+/*
+ * Allocate a number of bytes from the current contiguous run.
+ *
+ * Returns a pointer to them, or NULL if they do not fit.
+ */
+static __dz_force_inline
+void *dz_mem_from_run(
+	struct dz_mem_s *mem,
+	size_t size)
+{
+	if(dz_mem_stack_rem(mem) < size) {
+		return NULL;
+	}
 	void *ptr = (void *)mem->stack.top;
 	mem->stack.top += size;
     return(ptr);
@@ -585,8 +616,8 @@ unittest() {
 #define _begin_column_head(_spos, _epos, _adj, _forefronts, _n_forefronts) ({ \
 	/* calculate sizes */ \
 	size_t next_req = _calc_next_size(_spos, _epos, _n_forefronts); \
-	/* allocate from heap */  \
-    if(dz_mem_stack_rem(dz_mem(self)) < next_req) { dz_mem_add_stack(dz_mem(self), next_req); } /* 0); }*/ \
+	/* reserve run from heap */  \
+	dz_mem_run(dz_mem(self), next_req); \
 	/* push head-cap */ \
 	struct dz_cap_s *cap = _init_cap(_adj, 0xff, _forefronts, _n_forefronts); \
 	/* return array pointer */ \
