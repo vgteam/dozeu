@@ -23,6 +23,7 @@
 #include <string.h>
 
 #define UNITTEST				1
+#define DEBUG					1
 #define DZ_FULL_LENGTH_BONUS						/* use full-length bonus feature */
 #define DZ_CIGAR_OP				0x44493d58			/* 'D', 'I', '=', 'X'; the default is 0x04030201 */
 #include "dozeu.h"
