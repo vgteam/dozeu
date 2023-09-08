@@ -601,11 +601,11 @@ unittest() {
 #define _init_cap(_adj, _rch, _forefronts, _n_forefronts) ({ \
 	/* push forefront pointers */ \
 	size_t forefront_arr_size = dz_roundup(sizeof(struct dz_forefront_s *) * (_n_forefronts), sizeof(__m128i)); \
-	struct dz_forefront_s const **dst = (struct dz_forefront_s const **)(dz_mem(self)->stack.top + forefront_arr_size); \
+	struct dz_forefront_s const **dst = ((struct dz_forefront_s const **)(dz_mem(self)->stack.top + forefront_arr_size)) - ((int64_t)(_n_forefronts)); \
 	struct dz_forefront_s const **src = (struct dz_forefront_s const **)(_forefronts); \
-	for(size_t i = 0; i < (_n_forefronts); i++) { dst[-((int64_t)(_n_forefronts)) + i] = src[i]; } \
+	for(size_t i = 0; i < (_n_forefronts); i++) { dst[i] = src[i]; } \
 	/* push head-cap info */ \
-	struct dz_head_s *_head = (struct dz_head_s *)dst; \
+	struct dz_head_s *_head = (struct dz_head_s *)(dst + ((int64_t)(_n_forefronts))); \
 	(_head)->r.spos = (_adj);					/* save merging adjustment */ \
 	(_head)->r.epos = 0;						/* head marked as zero */ \
 	(_head)->rch = (_rch);						/* rch for the first column */ \
