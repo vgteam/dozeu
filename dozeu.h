@@ -648,7 +648,8 @@ unittest() {
 	(struct dz_swgv_s *)(cap + 1) - (_spos); \
 })
 /*
- * Fill in a terminating cap for the most recent column passed to _end_column.
+ * Fill in a terminating cap for the most recent column passed to _end_column,
+ * using the range information already above the allocator stack.
  * Either immediately after it or in a new contiguous run of memory, reserve
  * space for a new column. If the new column is not immediately after the old
  * column, copy a (fake?) version of the old column's cap to be before it.
@@ -679,15 +680,15 @@ unittest() {
 })
 /*
  * Given the slice array address for a column begun with _begin_column() or
- * _begin_column_head(), finish the column, and allow the allocator to be used
- * again.
+ * _begin_column_head(), finish the column.
  *
  * Note that we have actually used the _spos to _epos part of the column's
  * vector, and save range data after that vector recording the range its slice
  * covers.
  *
  * Returns the address of the filled-in range, which it leaves just above the
- * allocator stack.
+ * allocator stack, to be made into a cap by _begin_column() or into a
+ * forefront by _end_matrix().
  */
 #define _end_column(_p, _spos, _epos) ({ \
 	/* write back the stack pointer and return a cap */ \
