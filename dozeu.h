@@ -784,8 +784,6 @@ unittest() {
 	slice_data - (_spos); \
 })
 
-#define _unwind_cap(_c)				( dz_ccap(dz_cswgv(_c) - (_c)->r.epos + (_c)->r.spos) - 1 )
-
 /*
  * Fill in a terminating cap for the most recent column passed to _end_column,
  * using the range information in the current active allocation.
@@ -816,7 +814,7 @@ unittest() {
 		dz_mem_stream_reserve(dz_mem(self), next_req_split); \
 		cap = _init_cap(0, _rch, &cap, 1); \
 	} \
-	debug("create column(%p) pcap(%p), [%u, %u), span(%u), rrem(%ld), max(%d), inc(%d)", cap, _unwind_cap(cap), (_w).fr.spos, (_w).fr.epos, (_w).r.epos - (_w).r.spos, (_rlen), (_w).max, (_w).inc); \
+	debug("create column(%p), [%u, %u), span(%u), rrem(%ld), max(%d), inc(%d)", cap, (_w).fr.spos, (_w).fr.epos, (_w).r.epos - (_w).r.spos, (_rlen), (_w).max, (_w).inc); \
 	/* start array slice allocation */ \
 	struct dz_swgv_s *slice_data = dz_swgv(dz_mem_stream_alloc_begin(dz_mem(self), _calc_max_slice_size((_w).fr.spos, (_w).fr.epos))); \
 	/* return array pointer */ \
