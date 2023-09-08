@@ -263,9 +263,27 @@ struct dz_alignment_s {
 };
 
 /* context (constants and working buffers) */
+
+/*
+ * Header for a block of memory used in an arena.
+ *
+ * Exists at the beginning of the block.
+ */
 struct dz_mem_block_s { struct dz_mem_block_s *next; size_t size; };
+/*
+ * Bookkeeping information for the arena allocator.
+ *
+ * Exists at the beginning of the first block, just after its block header.
+ */
 struct dz_stack_s { struct dz_mem_block_s *curr; uint8_t *top, *end; uint64_t _pad[3]; };
+/*
+ * Represents a Dozeu memory allocation arena.
+ *
+ * Exists at the beginning of the arena's first block, and contains its block
+ * header and also its stack bookkeeping information.
+ */
 struct dz_mem_s { struct dz_mem_block_s blk; struct dz_stack_s stack; };
+/* Compute the number of bytes available to allocate in the current active block of an arena. */
 #define dz_mem_stack_rem(_mem)		( (size_t)((_mem)->stack.end - (_mem)->stack.top) )
 
 struct dz_s {
@@ -372,6 +390,13 @@ unittest() {
  * @fn dz_mem_init, dz_mem_destroy, dz_mem_add_stack, dz_mem_malloc, dz_mem_flush
  * @brief stack chain
  */
+
+/*
+ * "Flush" a memory arena.
+ *
+ * Retain all blocks allocated from the system allcoator, but internally amrk
+ * all the space as free.
+ */
 static __dz_force_inline
 void dz_mem_flush(
 	struct dz_mem_s *mem)
@@ -383,6 +408,15 @@ void dz_mem_flush(
     mem->stack.end = (uint8_t *)mem + mem->blk.size;// - DZ_MEM_MARGIN_SIZE;
 	return;
 }
+
+/*
+ * Create a new memory arena.
+ *
+ * The arena will initially have space for internal allocation structures, and
+ * at least the given number of bytes of user data.
+ *
+ * If allocation fails, NULL is returned.
+ */
 static __dz_force_inline
 struct dz_mem_s *dz_mem_init(
 	size_t size)
@@ -399,6 +433,12 @@ struct dz_mem_s *dz_mem_init(
 	dz_mem_flush(mem);
 	return(mem);
 }
+
+/*
+ * Free a memory arena created with dz_mem_init().
+ *
+ * The arena must not be NULL.
+ */
 static __dz_force_inline
 void dz_mem_destroy(
 	struct dz_mem_s *mem)
@@ -413,6 +453,18 @@ void dz_mem_destroy(
 	dz_free(mem);
 	return;
 }
+
+/*
+ * Advance a memory arena to a next block that can allocate the given number of bytes.
+ *
+ * Always advances to a new block; assumes sufficient space is definitely not
+ * available in the current block.
+ *
+ * Handles creating new blocks for the arena, or replacing old blocks that are
+ * not large enough.
+ *
+ * Returns 0 on success, and 1 if memory could not be allocated.
+ */
 static __dz_force_inline
 uint64_t dz_mem_add_stack(
 	struct dz_mem_s *mem,
@@ -453,20 +505,38 @@ uint64_t dz_mem_add_stack(
 	mem->stack.end = (uint8_t *)mem->stack.curr + mem->stack.curr->size - DZ_MEM_MARGIN_SIZE;
 	return(0);
 }
+
+/*
+ * Allocate memory from an arena.
+ *
+ * Returns NULL if memory could not be allocated.
+ */
 static __dz_force_inline
 void *dz_mem_malloc(
 	struct dz_mem_s *mem,
 	size_t size)
 {
+	/* Make sure to maintain memory alignment.
+	 *
+	 * We need to precompute the aligned size instead of just bumping top by
+	 * the aligned size, because we need to make sure the alignment padding
+	 * memory is actually available in the space between top and end.
+	 * Otherwise, top could pass end, and dz_mem_stack_rem() could overflow.
+	 */
+	size = dz_roundup(size, sizeof(__m128i));
+
     // TODO: this doesn't seem to check to make sure the size allocated is big enough...
     // also, where does 4096 come from?
     // also, don't we need to provide the size to ensure that a large enough block is allocated?
 	//if(dz_mem_stack_rem(mem) < 4096) { dz_mem_add_stack(mem, 0); }
     if(dz_mem_stack_rem(mem) < size) {
-        dz_mem_add_stack(mem, size);
+        if(dz_mem_add_stack(mem, size)) {
+			/* Report a failed allocation. */
+			return NULL;
+		}
     }
 	void *ptr = (void *)mem->stack.top;
-	mem->stack.top += dz_roundup(size, sizeof(__m128i));
+	mem->stack.top += size;
     return(ptr);
 }
                      
