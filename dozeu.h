@@ -200,14 +200,20 @@ struct dz_node_s { int32_t id, len; uint8_t const *ptr; };
 dz_static_assert(sizeof(struct dz_node_s) % sizeof(__m128i) == 0);
 
 /* DP matrix structures */
-struct dz_swgv_s { __m128i e, f, s; };						/* followed by dz_cap_s */
-struct dz_range_s { uint32_t spos, epos; };					/* placed just after every score vector to indicate the length */
 
+/* Score vector item. Array of these will be followed by a dz_cap_s, which leads with a range. */
+struct dz_swgv_s { __m128i e, f, s; };
+/* placed just after every score vector (as part of a cap) to indicate the length */
+struct dz_range_s { uint32_t spos, epos; };
+
+/* A special kind of initial cap. Identical in size to a cap. */
 struct dz_head_s {
 	struct dz_range_s r;
 	uint32_t rch, n_forefronts;
 };
-struct dz_cap_s {											/* followed by dz_forefront_s; spos and epos are shared to forefront_s */
+
+/* followed by dz_forefront_s; range spos and epos are "shared to" (???) forefront_s */
+struct dz_cap_s {
 	struct dz_range_s r;
 	uint32_t rch; int32_t rrem;
 };
@@ -598,6 +604,9 @@ unittest() {
 	/* debug("est_column_size(%lu), next_req(%lu)", est_column_size, next_req); */ \
 	next_req; \
 })
+/*
+ * Save an array of forefront pointers to the stack, followed by a head cap that indicates the number of forefronts before it.
+ */
 #define _init_cap(_adj, _rch, _forefronts, _n_forefronts) ({ \
 	/* push forefront pointers */ \
 	size_t forefront_arr_size = dz_roundup(sizeof(struct dz_forefront_s *) * (_n_forefronts), sizeof(__m128i)); \
@@ -613,6 +622,8 @@ unittest() {
 	debug("create head cap(%p), n_forefronts(%lu)", _head, (uint64_t)(_n_forefronts)); \
 	dz_cap(_head); \
 })
+/*
+ * Reserve space for a column and put a cap */
 #define _begin_column_head(_spos, _epos, _adj, _forefronts, _n_forefronts) ({ \
 	/* calculate sizes */ \
 	size_t next_req = _calc_next_size(_spos, _epos, _n_forefronts); \
