@@ -34,6 +34,7 @@ int main(int argc, char *argv[])
 	/* init score matrix and memory arena */
 	int8_t const M = 2, X = -3, GI = 5, GE = 1;		/* match, mismatch, gap open, and gap extend; g(k) = GI + k + GE for k-length gap */
 	int8_t const xdrop_threshold = 70, full_length_bonus = 10;
+	int8_t max_gap_length = (xdrop_threshold - GI) / GE;
 	int8_t const score_matrix[16] = {
 	/*              ref-side  */
 	/*             A  C  G  T */
@@ -46,15 +47,16 @@ int main(int argc, char *argv[])
 		score_matrix,
 		GI, GE
 	);
-    // TODO: does xdrop_threshold go in anymore?
+	/* Initialize root of alignment */
+	struct dz_alignment_init_s aln_init = dz_align_init(dz, max_gap_length);
 
 	/* pack query */
 	char const *query = "ACACTTCTAGACTTTACCACTA";
 	struct dz_query_s const *q = dz_pack_query_forward(
-	    dz,
-	    query,						/* char const *seq: query sequence */
-        full_length_bonus,
-	    strlen(query)				/* length */
+		dz,
+		query,						/* char const *seq: query sequence */
+		full_length_bonus,
+		strlen(query)				/* length */
 	);
 
 	/* init node array */
@@ -62,25 +64,26 @@ int main(int argc, char *argv[])
 
 	/* fill root: node 0 */
 	ff[0] = dz_extend(
-	    dz, q,
-	    dz_root(dz), 1,				/* struct dz_forefront_s const *ff[], uint64_t n_ffs; incoming forefront and degree; dz_root(dz) for root node */
-	    "ACAC", strlen("ACAC"), 0	/* reference-side sequence, its length, and node id */
+		dz, q,
+		&aln_init.root, 1,			/* struct dz_forefront_s const *ff[], uint64_t n_ffs; incoming forefront and degree; */
+		"ACAC", strlen("ACAC"), 0,	/* reference-side sequence, its length, and node id */
+		aln_init.xt					/* x-drop threshold */
 	);
 
 	/* branching paths: 1, 2 -> 3 */
-	ff[1] = dz_extend(dz, q, &ff[0], 1, "TTGT", strlen("TTGT"), 1);
-	ff[2] = dz_extend(dz, q, &ff[0], 1, "ATCC", strlen("ATCC"), 2);
-	ff[3] = dz_extend(dz, q, &ff[1], 2, "AGAC", strlen("AGAC"), 3);		/* "&ff[1], 2" indicates ff[1] and ff[2] are incoming nodes */
+	ff[1] = dz_extend(dz, q, &ff[0], 1, "TTGT", strlen("TTGT"), 1, aln_init.xt);
+	ff[2] = dz_extend(dz, q, &ff[0], 1, "ATCC", strlen("ATCC"), 2, aln_init.xt);
+	ff[3] = dz_extend(dz, q, &ff[1], 2, "AGAC", strlen("AGAC"), 3, aln_init.xt);	/* "&ff[1], 2" indicates ff[1] and ff[2] are incoming nodes */
 
 	/* insertion: -, 4 -> 5 */
-	ff[4] = dz_extend(dz, q, &ff[3], 1, "T", strlen("T"), 4);
-	ff[5] = dz_extend(dz, q, &ff[3], 2, "TTCTA", strlen("TTCTA"), 5);	/* "&ff[3], 2" indicates ff[3] and ff[4] are incoming nodes */
+	ff[4] = dz_extend(dz, q, &ff[3], 1, "T", strlen("T"), 4, aln_init.xt);
+	ff[5] = dz_extend(dz, q, &ff[3], 2, "TTCTA", strlen("TTCTA"), 5, aln_init.xt);	/* "&ff[3], 2" indicates ff[3] and ff[4] are incoming nodes */
 
 	/* SNVs: 6, 7, 8 -> 9 */
-	ff[6] = dz_extend(dz, q, &ff[5], 1, "A", strlen("A"), 6);
-	ff[7] = dz_extend(dz, q, &ff[5], 1, "C", strlen("C"), 7);
-	ff[8] = dz_extend(dz, q, &ff[5], 1, "G", strlen("G"), 8);
-	ff[9] = dz_extend(dz, q, &ff[6], 3, "CACGG", strlen("CACGG"), 9);
+	ff[6] = dz_extend(dz, q, &ff[5], 1, "A", strlen("A"), 6, aln_init.xt);
+	ff[7] = dz_extend(dz, q, &ff[5], 1, "C", strlen("C"), 7, aln_init.xt);
+	ff[8] = dz_extend(dz, q, &ff[5], 1, "G", strlen("G"), 8, aln_init.xt);
+	ff[9] = dz_extend(dz, q, &ff[6], 3, "CACGG", strlen("CACGG"), 9, aln_init.xt);
 
 	/* detect max */
 	struct dz_forefront_s const *max = NULL;

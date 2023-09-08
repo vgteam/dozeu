@@ -106,6 +106,11 @@ enum dz_alphabet {
 #  ifndef DZ_MAT_SIZE
 #    define DZ_MAT_SIZE				( 32 )
 #  endif
+#ifdef DZ_FULL_LENGTH_BONUS
+#define dz_end_bonus(_self, _query, _i)            ((_i) / 8 == (_query)->blen - 1 ? (_query)->bonus[8 + ((_i) & 7)] : 0)
+#else
+#define dz_end_bonus(_self, _query, _i)            0;
+#endif
 #define dz_pair_score(_self, _q, _r, _i)	( (int8_t)((_q)->arr[(_r) * (_q)->blen * L + (_i)]) + dz_end_bonus(_self, _q, _i))
 #define dz_pair_eq(_self, _q, _r, _i)		( (uint32_t)((_q)->q[(_i) - 1] & 0x1f) == (uint32_t)(_r) )
 #endif
@@ -216,8 +221,15 @@ struct dz_forefront_s {
 	struct dz_query_s const *query;
 	struct dz_cap_s const *mcap;
 };
-// When initializing forefronts, we want to be able to fill in the pad without saying 0s everywhere.
+/*
+ * When initializing forefronts, we want to be able to fill in the pad without saying 0s everywhere.
+ */
 #define DZ_FOREFRONT_PAD {0, 0, 0, 0, 0, 0, 0, 0}
+
+/*
+ * This holds the forefront for the alignment root, and the x-drop threshold,
+ * computed from the max gap length.
+ */
 struct dz_alignment_init_s {
     struct dz_forefront_s const *root;
     uint16_t xt;
