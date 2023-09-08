@@ -201,6 +201,29 @@ dz_static_assert(sizeof(struct dz_node_s) % sizeof(__m128i) == 0);
 
 /* DP matrix structures */
 
+/*
+ * The Dozeu DP matrix for a node looks like:
+ * - A head column, containing
+ *		- An array of pointers to forefronts for preceeding nodes
+ *		- A head cap (same size as a normal cap)
+ *	- 0 or more internal columns, which are:
+ *		- An array slice of score vector items
+ *		- A cap, containing:
+ *			- The range of the array slice
+ *			- Other data
+ *	- A final column, which is:
+ *		- An array slice of score vector items
+ *		- A forefront (a special final cap), containing
+ *			- The range of the array slice
+ *			- Other data
+ *
+ * So, each slice has the cap for the preceeding slice before it, and its own
+ * range stored immediately after it. This is because we dynamically stop
+ * slices early, and we put the final range actually used once we know it.
+ *
+ * We are able to break this structure in memory! If the next column's slice and cap could be too big to fit right after the previous column in the contiguous memory available, we start a new head column with the previous column's cap as a forefront, and all the forefront data except the cap left uninitialized.
+ */
+
 /* Score vector item. Array of these will be followed by a dz_cap_s, which leads with a range. */
 struct dz_swgv_s { __m128i e, f, s; };
 /* placed just after every score vector (as part of a cap) to indicate the length */
@@ -217,6 +240,11 @@ struct dz_cap_s {
 	struct dz_range_s r;
 	uint32_t rch; int32_t rrem;
 };
+/*
+ * A forefront. Appears at the end of a matrix.
+ *
+ * Is also a special kind of cap.
+ */
 struct dz_forefront_s {
 	struct dz_range_s r; // the range that applies to the preceding column
 	uint32_t rid;
@@ -670,7 +698,8 @@ unittest() {
 	cap->rch = (_rch);							/* record rch for the next column */ \
 	cap->rrem = (_rlen);						/* record rlen for use in traceback */ \
 	if(dz_likely(dz_mem_stack_rem(dz_mem(self)) < next_req)) { \
-        /* TODO: editing to make sure we ask for enough memory */ \
+        /* We start a new head column with the previous column's cap pointed to as if it were a forefront. */
+		/* TODO: editing to make sure we ask for enough memory */ \
 		dz_mem_add_stack(dz_mem(self), next_req); /* 0); }*/ \
 		cap = _init_cap(0, _rch, &cap, 1); \
 	} \
