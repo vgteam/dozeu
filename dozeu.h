@@ -677,6 +677,7 @@ void *dz_mem_stream_alloc(
 	/* TODO: Optimize instead of using the async primitives. */
 	void *ptr = dz_mem_stream_alloc_begin(mem, size);
 	if(dz_mem_stream_alloc_end(mem, size)) {
+		debug("Stream alloc failed");
 		ptr = NULL;
 	}
 	return ptr;
@@ -700,6 +701,7 @@ void *dz_mem_stream_right_alloc(
 
 	void *ptr = dz_mem_stream_alloc(mem, alloc_size);
 	if(ptr == NULL) {
+		debug("Stream right alloc failed");
 		return ptr;
 	}
 	void* right_aligned_ptr = (void*)((uint8_t*)ptr + (alloc_size - data_size));
@@ -2201,7 +2203,6 @@ uint64_t dz_calc_max_pos(struct dz_forefront_s const *forefront)
 		} \
 		_push_span(dz_cff(pcap)->rid);								/* push segment info */ \
 		_score = _s(_l, pcap, idx); \
-		*drp++ = ':'; *dqp++ = ':'; \
 	} \
 	/* return the reference-side base */ \
 	ref_length++; pcap->rch; \
@@ -2239,9 +2240,6 @@ struct dz_alignment_s *dz_trace(
 	struct dz_cap_s const *pcap = forefront->mcap, *cap = NULL;
 	struct dz_query_s const *query = forefront->query;
 	int32_t score = _s(s, pcap, idx), cnt[4] = { 0 };
-    
-	uint8_t debug_ref[1024], debug_query[1024];
-	uint8_t *drp = debug_ref, *dqp = debug_query;
     
     #ifdef DZ_QUAL_ADJ
     #    define _pair_score(_self, _q, _r, _i)   ( dz_qual_adj_pair_score((_self), (_q), (_r), (_i)) )
