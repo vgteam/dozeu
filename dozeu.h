@@ -1,6 +1,6 @@
 // $(CC) -O3 -march=native -DMAIN -o dozeu dozeu.c
 //#ifdef DZ_QUAL_ADJ
-#define DEBUG
+//#define DEBUG
 //#endif
 //#define DZ_PRINT_VECTOR
 /**
@@ -746,7 +746,7 @@ unittest() {
 
 #define _calc_max_slice_size(_sp, _ep) ({ \
     size_t max_slice_size = (2 * ((_ep) - (_sp)) * sizeof(struct dz_swgv_s)); \
-    debug("sp(%lu), ep(%lu), max_slice_size(%lu)", (size_t) (_sp), (size_t) (_ep), max_slice_size); \
+    /* debug("sp(%lu), ep(%lu), max_slice_size(%lu)", (size_t) (_sp), (size_t) (_ep), max_slice_size); */ \
     max_slice_size; \
 })
 /*
@@ -761,7 +761,7 @@ unittest() {
 	size_t forefront_arr_size = dz_roundup(sizeof(struct dz_forefront_s *) * (_nt), sizeof(__m128i)); \
 	size_t est_column_size = _calc_max_slice_size(_sp, _ep); \
 	size_t next_req = forefront_arr_size + est_column_size + sizeof(struct dz_forefront_s); \
-	debug("sp(%lu), ep(%lu), nt(%lu), est_column_size(%lu), next_req(%lu)", (size_t) (_sp), (size_t) (_ep), (size_t) (_nt), est_column_size, next_req); \
+	/* debug("sp(%lu), ep(%lu), nt(%lu), est_column_size(%lu), next_req(%lu)", (size_t) (_sp), (size_t) (_ep), (size_t) (_nt), est_column_size, next_req); */ \
 	next_req; \
 })
 /*
@@ -773,12 +773,10 @@ unittest() {
 #define _init_cap(_adj, _rch, _forefronts, _n_forefronts) ({ \
 	/* push forefront pointers */ \
 	size_t forefront_arr_size = dz_roundup(sizeof(struct dz_forefront_s *) * (_n_forefronts), sizeof(__m128i)); \
-	debug("Allocate %lu forefronts", ((size_t) (_n_forefronts))); \
     struct dz_forefront_s const **dst = (struct dz_forefront_s const **)(dz_mem_stream_right_alloc(dz_mem(self), (int64_t)(_n_forefronts), sizeof(struct dz_forefront_s *), sizeof(__m128i))); \
 	struct dz_forefront_s const **src = (struct dz_forefront_s const **)(_forefronts); \
 	for(size_t i = 0; i < (_n_forefronts); i++) { dst[i] = src[i]; } \
 	/* push head-cap info */ \
-    debug("Allocate head"); \
 	struct dz_head_s *_head = (struct dz_head_s *)(dz_mem_stream_alloc(dz_mem(self), sizeof(struct dz_head_s))); \
 	(_head)->r.spos = (_adj);					/* save merging adjustment */ \
 	(_head)->r.epos = 0;						/* head marked as zero */ \
@@ -799,7 +797,6 @@ unittest() {
  * _end_matrix() before the arena can be used again for something else.
  */
 #define _begin_column_head(_spos, _epos, _adj, _forefronts, _n_forefronts) ({ \
-	debug("Begin column head"); \
     /* calculate sizes */ \
 	size_t next_req = _calc_next_size(_spos, _epos, _n_forefronts); \
 	/* reserve stream of memory to push onto */  \
@@ -827,7 +824,6 @@ unittest() {
  * arena can be used again.
  */
 #define _begin_column(_w, _rch, _rlen) ({ \
-    debug("Begin column"); \
 	/* push cap info */ \
 	struct dz_cap_s *cap = dz_cap(dz_mem_stream_alloc_current(dz_mem(self))); \
 	dz_mem_stream_alloc_end(dz_mem(self), sizeof(struct dz_cap_s)); \
@@ -846,7 +842,6 @@ unittest() {
 	debug("create column(%p), [%u, %u), span(%u), rrem(%ld), max(%d), inc(%d)", cap, (_w).fr.spos, (_w).fr.epos, (_w).r.epos - (_w).r.spos, (_rlen), (_w).max, (_w).inc); \
 	/* start array slice allocation */ \
 	struct dz_swgv_s *slice_data = dz_swgv(dz_mem_stream_alloc_begin(dz_mem(self), _calc_max_slice_size((_w).fr.spos, (_w).fr.epos))); \
-    debug("Column begun"); \
 	/* return array pointer */ \
 	slice_data - (_w).fr.spos; \
 })
@@ -863,7 +858,6 @@ unittest() {
  * _end_matrix().
  */
 #define _end_column(_p, _spos, _epos) ({ \
-    debug("End column"); \
 	/* finish the slice data allocation with what was actually used */ \
 	dz_mem_stream_alloc_end(dz_mem(self), ((_epos) - (_spos)) * sizeof(struct dz_swgv_s)); \
 	/* immediately next in memory, allocate up to a forefront, as a range */ \
