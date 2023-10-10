@@ -1059,7 +1059,7 @@ struct dz_s *dz_init_intl(
     size_t self_and_matrix_size = sizeof(struct dz_s);
     #if defined(DZ_NUCL_ASCII) || defined(DZ_NUCL_2BIT)
         #ifdef DZ_QUAL_ADJ
-            self_and_matrix_size += 2 * DZ_QUAL_MATRIX_SIZE);
+            self_and_matrix_size += 2 * DZ_QUAL_MATRIX_SIZE;
         #endif
     #else
             self_and_matrix_size += DZ_MAT_SIZE * DZ_MAT_SIZE + 2 * sizeof(__m128i);
