@@ -1,6 +1,6 @@
 // $(CC) -O3 -march=native -DMAIN -o dozeu dozeu.c
 //#ifdef DZ_QUAL_ADJ
-//#define DEBUG
+#define DEBUG
 //#endif
 //#define DZ_PRINT_VECTOR
 /**
@@ -143,6 +143,13 @@ unittest() { debug("hello"); }
 #  define trap()					;
 #endif
 
+#define die(...) { \
+	die_impl(__VA_ARGS__, ""); \
+}
+#define die_impl(fmt, ...) { \
+	fprintf(stderr, "[%s: %s(%d)] " fmt "%s\n", __FILE__, __func__, __LINE__, __VA_ARGS__); \
+    exit(1); \
+}
 
 #if defined(DZ_NUCL_ASCII)
 #  define DZ_UNITTEST_INDEX			0
@@ -313,7 +320,7 @@ struct dz_mem_block_s { struct dz_mem_block_s *next; size_t size; };
  *
  * Exists at the beginning of the first block, just after its block header.
  */
-struct dz_stack_s { struct dz_mem_block_s *curr; uint8_t *top, *end; uint64_t being_allocated; uint64_t _pad[2]; };
+struct dz_stack_s { struct dz_mem_block_s *curr; uint8_t *top, *end; uint64_t being_allocated; uint64_t reservation_remaining; uint64_t _pad[1]; };
 /*
  * Represents a Dozeu memory allocation arena.
  *
@@ -445,6 +452,7 @@ void dz_mem_flush(
     // of the requested size
     mem->stack.end = (uint8_t *)mem + mem->blk.size;// - DZ_MEM_MARGIN_SIZE;
 	mem->stack.being_allocated = 0;
+    mem->stack.reservation_remaining = 0;
 	return;
 }
 
@@ -567,8 +575,7 @@ void *dz_mem_malloc(
     if(dz_mem_stack_rem(mem) < size) {
         if(dz_mem_add_stack(mem, size)) {
 			/* Report a failed allocation. */
-			debug("Allocation failed");
-			return NULL;
+			die("Allocation of %lu bytes failed", size);
 		}
     }
 	void *ptr = (void *)mem->stack.top;
@@ -586,11 +593,12 @@ uint64_t dz_mem_stream_reserve(
 	struct dz_mem_s *mem,
 	size_t size)
 {
-	debug("Reserve %lu bytes", size);
+	debug("Reserve %lu bytes for stream", size);
 	/* We cheat and just use a whole block as a run. */
 	if(dz_likely(dz_mem_stack_rem(mem) < size)) {
 		return dz_mem_add_stack(mem, size);
 	}
+    mem->stack.reservation_remaining = size;
 	return 0;
 }
 
@@ -601,7 +609,7 @@ static __dz_force_inline
 uint64_t dz_mem_stream_remaining(
 	struct dz_mem_s *mem)
 {
-	return dz_mem_stack_rem(mem);
+	return mem->stack.reservation_remaining;
 }
 
 /*
@@ -616,11 +624,17 @@ void *dz_mem_stream_alloc_begin(
 	size_t size)
 {
 	if(dz_mem_stack_rem(mem) < size || mem->stack.being_allocated != 0) {
-		debug("Not allowed");	
-		return NULL;
+        if (dz_mem_stack_rem(mem) < size) {
+		    die("Asked to allocate %lu bytes, but only %lu bytes remain on stack", size, dz_mem_stack_rem(mem));
+        } else if (mem->stack.being_allocated != 0) {
+            die("Asked to allocate %lu bytes, but another allocaton of %lu bytes is already in progress", size, mem->stack.being_allocated);
+        }
 	}
+    if (mem->stack.reservation_remaining < size) {
+        die("Asked to allocate %lu bytes, but only %lu bytes remain in reservation", size, mem->stack.reservation_remaining);
+    }
 	void *ptr = (void *)mem->stack.top;
-	debug("Begin allocating %lu bytes (%p)", size, ptr);
+	debug("Begin allocating %lu bytes (%p) from %lu in reservation", size, ptr, mem->stack.reservation_remaining);
 	/* Reserve this area above the stack */
 	mem->stack.being_allocated = size;
     return(ptr);
@@ -636,8 +650,7 @@ void *dz_mem_stream_alloc_current(
 	struct dz_mem_s *mem)
 {
 	if(mem->stack.being_allocated == 0) {
-		debug("Nothing currently being allocated");
-		return NULL;
+		die("Nothing currently being allocated");
 	}
 	return (void *)mem->stack.top;
 }
@@ -661,6 +674,7 @@ uint64_t dz_mem_stream_alloc_end(
 	}
 	mem->stack.top += size;
 	mem->stack.being_allocated = 0;
+    mem->stack.reservation_remaining -= size;
 	return 0;
 }
 
@@ -730,15 +744,24 @@ unittest() {
  * vector update macros
  */
 
-#define _calc_max_slice_size(_sp, _ep) (2 * ((_ep) - (_sp)) * sizeof(struct dz_swgv_s))
+#define _calc_max_slice_size(_sp, _ep) ({ \
+    size_t max_slice_size = (2 * ((_ep) - (_sp)) * sizeof(struct dz_swgv_s)); \
+    debug("sp(%lu), ep(%lu), max_slice_size(%lu)", (size_t) (_sp), (size_t) (_ep), max_slice_size); \
+    max_slice_size; \
+})
 /*
- * Determine how many bytes are needed to store forefront pointers, the cap, and a column vector.
+ * Determine how many bytes are needed to store forefront pointers, the column
+ * vector, and the cap at the end from _end_column, which may need to be a
+ * (larger) forefront if this ends up being the last column.
+ * _sp: start position in the column
+ * _ep: end position in the column
+ * _nt: number of forefronts that need pointers
  */
 #define _calc_next_size(_sp, _ep, _nt) ({ \
 	size_t forefront_arr_size = dz_roundup(sizeof(struct dz_forefront_s *) * (_nt), sizeof(__m128i)); \
 	size_t est_column_size = _calc_max_slice_size(_sp, _ep); \
-	size_t next_req = forefront_arr_size + est_column_size + sizeof(struct dz_cap_s); \
-	/* debug("est_column_size(%lu), next_req(%lu)", est_column_size, next_req); */ \
+	size_t next_req = forefront_arr_size + est_column_size + sizeof(struct dz_forefront_s); \
+	debug("sp(%lu), ep(%lu), nt(%lu), est_column_size(%lu), next_req(%lu)", (size_t) (_sp), (size_t) (_ep), (size_t) (_nt), est_column_size, next_req); \
 	next_req; \
 })
 /*
@@ -750,10 +773,12 @@ unittest() {
 #define _init_cap(_adj, _rch, _forefronts, _n_forefronts) ({ \
 	/* push forefront pointers */ \
 	size_t forefront_arr_size = dz_roundup(sizeof(struct dz_forefront_s *) * (_n_forefronts), sizeof(__m128i)); \
-	struct dz_forefront_s const **dst = (struct dz_forefront_s const **)(dz_mem_stream_right_alloc(dz_mem(self), (int64_t)(_n_forefronts), sizeof(struct dz_forefront_s *), sizeof(__m128i))); \
+	debug("Allocate %lu forefronts", ((size_t) (_n_forefronts))); \
+    struct dz_forefront_s const **dst = (struct dz_forefront_s const **)(dz_mem_stream_right_alloc(dz_mem(self), (int64_t)(_n_forefronts), sizeof(struct dz_forefront_s *), sizeof(__m128i))); \
 	struct dz_forefront_s const **src = (struct dz_forefront_s const **)(_forefronts); \
 	for(size_t i = 0; i < (_n_forefronts); i++) { dst[i] = src[i]; } \
 	/* push head-cap info */ \
+    debug("Allocate head"); \
 	struct dz_head_s *_head = (struct dz_head_s *)(dz_mem_stream_alloc(dz_mem(self), sizeof(struct dz_head_s))); \
 	(_head)->r.spos = (_adj);					/* save merging adjustment */ \
 	(_head)->r.epos = 0;						/* head marked as zero */ \
@@ -774,7 +799,8 @@ unittest() {
  * _end_matrix() before the arena can be used again for something else.
  */
 #define _begin_column_head(_spos, _epos, _adj, _forefronts, _n_forefronts) ({ \
-	/* calculate sizes */ \
+	debug("Begin column head"); \
+    /* calculate sizes */ \
 	size_t next_req = _calc_next_size(_spos, _epos, _n_forefronts); \
 	/* reserve stream of memory to push onto */  \
 	dz_mem_stream_reserve(dz_mem(self), next_req); \
@@ -797,10 +823,11 @@ unittest() {
  * corresponds to the column vector.
  *
  * The returned pointer must be passed to _end_column() before another column
- * can be begin, and the last column must be passed to _end_matrix() before the
+ * can be begun, and the last column must be passed to _end_matrix() before the
  * arena can be used again.
  */
 #define _begin_column(_w, _rch, _rlen) ({ \
+    debug("Begin column"); \
 	/* push cap info */ \
 	struct dz_cap_s *cap = dz_cap(dz_mem_stream_alloc_current(dz_mem(self))); \
 	dz_mem_stream_alloc_end(dz_mem(self), sizeof(struct dz_cap_s)); \
@@ -819,6 +846,7 @@ unittest() {
 	debug("create column(%p), [%u, %u), span(%u), rrem(%ld), max(%d), inc(%d)", cap, (_w).fr.spos, (_w).fr.epos, (_w).r.epos - (_w).r.spos, (_rlen), (_w).max, (_w).inc); \
 	/* start array slice allocation */ \
 	struct dz_swgv_s *slice_data = dz_swgv(dz_mem_stream_alloc_begin(dz_mem(self), _calc_max_slice_size((_w).fr.spos, (_w).fr.epos))); \
+    debug("Column begun"); \
 	/* return array pointer */ \
 	slice_data - (_w).fr.spos; \
 })
@@ -835,9 +863,10 @@ unittest() {
  * _end_matrix().
  */
 #define _end_column(_p, _spos, _epos) ({ \
+    debug("End column"); \
 	/* finish the slice data allocation with what was actually used */ \
 	dz_mem_stream_alloc_end(dz_mem(self), ((_epos) - (_spos)) * sizeof(struct dz_swgv_s)); \
-	/* allocate up to a forefront, as a range */ \
+	/* immediately next in memory, allocate up to a forefront, as a range */ \
 	struct dz_range_s *r = dz_range(dz_mem_stream_alloc_begin(dz_mem(self), sizeof(struct dz_forefront_s))); \
 	debug("create range(%p), [%u, %u)", r, (_spos), (_epos)); \
 	r->spos = (_spos); r->epos = (_epos); \
@@ -1030,14 +1059,24 @@ struct dz_s *dz_init_intl(
 		debug("failed to malloc memory");
 		return(NULL);
 	}
+
+    // We need to work out the contiguous block size we need for the dz_s, its matrix data, and the terminal cap.
+    // Since they need to be adjacent (TODO: do they?) we use the streaming allocator.
+    size_t self_and_matrix_size = sizeof(struct dz_s);
+    #if defined(DZ_NUCL_ASCII) || defined(DZ_NUCL_2BIT)
+        #ifdef DZ_QUAL_ADJ
+            self_and_matrix_size += 2 * DZ_QUAL_MATRIX_SIZE);
+        #endif
+    #else
+            self_and_matrix_size += DZ_MAT_SIZE * DZ_MAT_SIZE + 2 * sizeof(__m128i);
+    #endif
+    size_t cap_size = _calc_next_size(0, 0, 0);
+    dz_mem_stream_reserve(mem, self_and_matrix_size + cap_size);
+
     // TODO: what is the point of the latter 16 bytes all being zero?
 	#if defined(DZ_NUCL_ASCII) || defined(DZ_NUCL_2BIT)
         /* allocate with or without space afterwards for the quality adjusted matrices */
-        #ifdef DZ_QUAL_ADJ
-            struct dz_s *self = (struct dz_s *)dz_mem_malloc(mem, sizeof(struct dz_s) + 2 * DZ_QUAL_MATRIX_SIZE);
-        #else
-            struct dz_s *self = (struct dz_s *)dz_mem_malloc(mem, sizeof(struct dz_s));
-        #endif
+        struct dz_s *self = (struct dz_s *)dz_mem_stream_alloc(mem, self_and_matrix_size);
 
 		/* constants */
 		__m128i const tmat = _mm_loadu_si128((__m128i const *)score_matrix);
@@ -1053,7 +1092,7 @@ struct dz_s *dz_init_intl(
             }
         #endif
 	#else
-		struct dz_s *self = (struct dz_s *)dz_mem_malloc(mem, sizeof(struct dz_s) + DZ_MAT_SIZE * DZ_MAT_SIZE + 2 * sizeof(__m128i));
+		struct dz_s *self = (struct dz_s *)dz_mem_stream_alloc(mem, self_and_matrix_size);
 
 		/* clear the first matrix field for protein */
 		_mm_store_si128((__m128i *)&self->matrix[0], _mm_setzero_si128());
@@ -1747,6 +1786,7 @@ unittest() {
 	} \
 	/* paste the last vectors */ \
 	for(size_t i = 0; i < n_forefronts; i++) { \
+        debug("Add column %lu", i); \
 		struct dz_swgv_s const *tdp = dz_cswgv(forefronts[i]) - forefronts[i]->r.epos; \
 		__m128i const adjv = _mm_set1_epi16(init_s == 0 ? 0 : adj[i]); \
 		for(uint64_t p = forefronts[i]->fr.spos; p < forefronts[i]->fr.epos; p++) { \
