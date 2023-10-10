@@ -143,13 +143,15 @@ unittest() { debug("hello"); }
 #  define trap()					;
 #endif
 
-#define die(...) { \
-	die_impl(__VA_ARGS__, ""); \
+#define dz_die(...) { \
+	dz_die_impl(__VA_ARGS__, ""); \
 }
-#define die_impl(fmt, ...) { \
+#define dz_die_impl(fmt, ...) { \
 	fprintf(stderr, "[%s: %s(%d)] " fmt "%s\n", __FILE__, __func__, __LINE__, __VA_ARGS__); \
     exit(1); \
 }
+
+#define dz_error                    dz_die
 
 #if defined(DZ_NUCL_ASCII)
 #  define DZ_UNITTEST_INDEX			0
@@ -575,7 +577,8 @@ void *dz_mem_malloc(
     if(dz_mem_stack_rem(mem) < size) {
         if(dz_mem_add_stack(mem, size)) {
 			/* Report a failed allocation. */
-			die("Allocation of %lu bytes failed", size);
+			dz_die("Allocation of %lu bytes failed", size);
+            return NULL;
 		}
     }
 	void *ptr = (void *)mem->stack.top;
@@ -594,11 +597,15 @@ uint64_t dz_mem_stream_reserve(
 	size_t size)
 {
 	debug("Reserve %lu bytes for stream", size);
+    mem->stack.reservation_remaining = size;
 	/* We cheat and just use a whole block as a run. */
 	if(dz_likely(dz_mem_stack_rem(mem) < size)) {
-		return dz_mem_add_stack(mem, size);
+		if (dz_mem_add_stack(mem, size)) {
+            dz_error("Could not reserve %lu bytes", size);
+            return 1;
+        }
+        return 0;
 	}
-    mem->stack.reservation_remaining = size;
 	return 0;
 }
 
@@ -625,13 +632,15 @@ void *dz_mem_stream_alloc_begin(
 {
 	if(dz_mem_stack_rem(mem) < size || mem->stack.being_allocated != 0) {
         if (dz_mem_stack_rem(mem) < size) {
-		    die("Asked to allocate %lu bytes, but only %lu bytes remain on stack", size, dz_mem_stack_rem(mem));
+		    dz_error("Asked to allocate %lu bytes, but only %lu bytes remain on stack", size, dz_mem_stack_rem(mem));
         } else if (mem->stack.being_allocated != 0) {
-            die("Asked to allocate %lu bytes, but another allocaton of %lu bytes is already in progress", size, mem->stack.being_allocated);
+            dz_error("Asked to allocate %lu bytes, but another allocaton of %lu bytes is already in progress", size, mem->stack.being_allocated);
         }
+        return NULL;
 	}
     if (mem->stack.reservation_remaining < size) {
-        die("Asked to allocate %lu bytes, but only %lu bytes remain in reservation", size, mem->stack.reservation_remaining);
+        dz_error("Asked to allocate %lu bytes, but only %lu bytes remain in reservation", size, mem->stack.reservation_remaining);
+        return NULL;
     }
 	void *ptr = (void *)mem->stack.top;
 	debug("Begin allocating %lu bytes (%p) from %lu in reservation", size, ptr, mem->stack.reservation_remaining);
@@ -650,7 +659,8 @@ void *dz_mem_stream_alloc_current(
 	struct dz_mem_s *mem)
 {
 	if(mem->stack.being_allocated == 0) {
-		die("Nothing currently being allocated");
+		dz_error("Nothing currently being allocated");
+        return NULL;
 	}
 	return (void *)mem->stack.top;
 }
@@ -719,7 +729,7 @@ void *dz_mem_stream_right_alloc(
 		return ptr;
 	}
 	void* right_aligned_ptr = (void*)((uint8_t*)ptr + (alloc_size - data_size));
-	debug("Allocate %lu items of %lu bytes each padded to %lu: block %p and right-aligned array %p", items, size, alignment, ptr, right_aligned_ptr);
+	debug("Allocated %lu items of %lu bytes each padded to %lu: block %p and right-aligned array %p", items, size, alignment, ptr, right_aligned_ptr);
 	return right_aligned_ptr;
 }
                      
@@ -746,13 +756,13 @@ unittest() {
 
 #define _calc_max_slice_size(_sp, _ep) ({ \
     size_t max_slice_size = (2 * ((_ep) - (_sp)) * sizeof(struct dz_swgv_s)); \
-    /* debug("sp(%lu), ep(%lu), max_slice_size(%lu)", (size_t) (_sp), (size_t) (_ep), max_slice_size); */ \
+    debug("sp(%lu), ep(%lu), max_slice_size(%lu)", (size_t) (_sp), (size_t) (_ep), max_slice_size); \
     max_slice_size; \
 })
 /*
- * Determine how many bytes are needed to store forefront pointers, the column
- * vector, and the cap at the end from _end_column, which may need to be a
- * (larger) forefront if this ends up being the last column.
+ * Determine how many bytes are needed to store forefront pointers, the head
+ * cap, the column vector, and the cap at the end from _end_column, which may
+ * need to be a (larger) forefront if this ends up being the last column.
  * _sp: start position in the column
  * _ep: end position in the column
  * _nt: number of forefronts that need pointers
@@ -760,8 +770,10 @@ unittest() {
 #define _calc_next_size(_sp, _ep, _nt) ({ \
 	size_t forefront_arr_size = dz_roundup(sizeof(struct dz_forefront_s *) * (_nt), sizeof(__m128i)); \
 	size_t est_column_size = _calc_max_slice_size(_sp, _ep); \
-	size_t next_req = forefront_arr_size + est_column_size + sizeof(struct dz_forefront_s); \
-	/* debug("sp(%lu), ep(%lu), nt(%lu), est_column_size(%lu), next_req(%lu)", (size_t) (_sp), (size_t) (_ep), (size_t) (_nt), est_column_size, next_req); */ \
+    size_t head_cap_size = sizeof(struct dz_head_s); \
+    size_t end_cap_size = sizeof(struct dz_forefront_s); \
+	size_t next_req = forefront_arr_size + head_cap_size + est_column_size + end_cap_size; \
+	debug("sp(%lu), ep(%lu), nt(%lu), forefront_arr_size(%lu), head_cap_size(%lu), est_column_size(%lu), end_cap_size(%lu), next_req(%lu)", (size_t) (_sp), (size_t) (_ep), (size_t) (_nt), forefront_arr_size, head_cap_size, est_column_size, end_cap_size, next_req); \
 	next_req; \
 })
 /*
@@ -797,6 +809,7 @@ unittest() {
  * _end_matrix() before the arena can be used again for something else.
  */
 #define _begin_column_head(_spos, _epos, _adj, _forefronts, _n_forefronts) ({ \
+    debug("Beginning column head"); \
     /* calculate sizes */ \
 	size_t next_req = _calc_next_size(_spos, _epos, _n_forefronts); \
 	/* reserve stream of memory to push onto */  \
@@ -824,6 +837,7 @@ unittest() {
  * arena can be used again.
  */
 #define _begin_column(_w, _rch, _rlen) ({ \
+    debug("Beginning column"); \
 	/* push cap info */ \
 	struct dz_cap_s *cap = dz_cap(dz_mem_stream_alloc_current(dz_mem(self))); \
 	dz_mem_stream_alloc_end(dz_mem(self), sizeof(struct dz_cap_s)); \
@@ -858,6 +872,7 @@ unittest() {
  * _end_matrix().
  */
 #define _end_column(_p, _spos, _epos) ({ \
+    debug("Ending column"); \
 	/* finish the slice data allocation with what was actually used */ \
 	dz_mem_stream_alloc_end(dz_mem(self), ((_epos) - (_spos)) * sizeof(struct dz_swgv_s)); \
 	/* immediately next in memory, allocate up to a forefront, as a range */ \
@@ -876,6 +891,7 @@ unittest() {
  * relationships will need to be maintained.
  */
 #define _end_matrix(_p, _wp, _rrem) ({ \
+    debug("Ending matrix"); \
 	/* create forefront object */ \
 	struct dz_forefront_s *forefront = dz_forefront(dz_mem_stream_alloc_current(dz_mem(self))); \
 	dz_mem_stream_alloc_end(dz_mem(self), sizeof(struct dz_forefront_s)); \
