@@ -1301,9 +1301,6 @@ void dz_trim(
 	struct dz_s *self,
     size_t max_bytes)
 {
-    fprintf(stderr, "Stack before trim:\n");
-    dz_mem_log_stack(dz_mem(self));
-
     struct dz_mem_block_s *keep_block = &(dz_mem(self)->blk);
     size_t bytes_found = 0;
     while (keep_block != NULL) {
@@ -1321,8 +1318,7 @@ void dz_trim(
         keep_block = keep_block->next;
     }
 
-    fprintf(stderr, "Stack after trim:\n");
-    dz_mem_log_stack(dz_mem(self));
+    return;
 }
 #endif // DZ_INCLUDE_ONCE
                               
@@ -1334,9 +1330,6 @@ void dz_flush(
 #endif
 	struct dz_s *self)
 {
-    fprintf(stderr, "Stack before flush:\n");
-    dz_mem_log_stack(dz_mem(self));
-
     // point the mem back at the initial block
 	dz_mem_flush(dz_mem(self));
     
@@ -1373,9 +1366,6 @@ void dz_flush(
         // We didn't get the right stack top at the end of all that.
         dz_error("Could not recreate post-init state when flushing! Stack top should be %p but is actually %p!", dz_mem(self)->stack.dz_flush_top, dz_mem(self)->stack.top);
     }
-
-    fprintf(stderr, "Stack after flush:\n");
-    dz_mem_log_stack(dz_mem(self));
 
 	return;
 }
