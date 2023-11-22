@@ -1278,6 +1278,9 @@ struct dz_alignment_init_s dz_align_init(
 #endif // DZ_INCLUDE_ONCE
                               
 #ifndef DZ_INCLUDE_ONCE
+/*
+ * Destroy a dz_s object when you are done with it.
+ */
 static __dz_vectorize
 void dz_destroy(
 	struct dz_s *self)
@@ -1286,6 +1289,40 @@ void dz_destroy(
 	if(self == NULL) { return; }
 	dz_mem_destroy(dz_mem(self));
 	return;
+}
+
+/*
+ * Limit the bytes of memory retained by a dz_s object to under the given limit.
+ * Limit must be greater than the memory required for the initialized, empty state.
+ * Can only be called after dz_flush/dz_qual_adj_flush.
+ */
+static __dz_vectorize
+void dz_trim(
+	struct dz_s *self,
+    size_t max_bytes)
+{
+    fprintf(stderr, "Stack before trim:\n");
+    dz_mem_log_stack(dz_mem(self));
+
+    struct dz_mem_block_s *keep_block = &(dz_mem(self)->blk);
+    size_t bytes_found = 0;
+    while (keep_block != NULL) {
+        bytes_found += keep_block->size;
+        if (keep_block->next != NULL && bytes_found + keep_block->next->size > max_bytes) {
+            /* Cut the free list past here. */
+            struct dz_mem_block_s *drop_block = keep_block->next;
+            while (drop_block != NULL) {
+                struct dz_mem_block_s *next = drop_block->next;
+                dz_free(drop_block);
+                drop_block = next;
+            }
+            keep_block->next = NULL;
+        }
+        keep_block = keep_block->next;
+    }
+
+    fprintf(stderr, "Stack after trim:\n");
+    dz_mem_log_stack(dz_mem(self));
 }
 #endif // DZ_INCLUDE_ONCE
                               
