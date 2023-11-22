@@ -322,7 +322,7 @@ struct dz_mem_block_s { struct dz_mem_block_s *next; size_t size; };
  *
  * Exists at the beginning of the first block, just after its block header.
  */
-struct dz_stack_s { struct dz_mem_block_s *curr; uint8_t *top, *end; uint64_t being_allocated; uint64_t reservation_remaining; uint64_t _pad[1]; };
+struct dz_stack_s { struct dz_mem_block_s *curr; uint8_t *top, *end; uint64_t being_allocated; uint64_t reservation_remaining; uint8_t *dz_flush_top; };
 /*
  * Represents a Dozeu memory allocation arena.
  *
@@ -441,7 +441,7 @@ unittest() {
 /*
  * "Flush" a memory arena.
  *
- * Retain all blocks allocated from the system allcoator, but internally amrk
+ * Retain all blocks allocated from the system allcoator, but internally mark
  * all the space as free.
  */
 static __dz_force_inline
@@ -1148,6 +1148,11 @@ struct dz_s *dz_init_intl(
     
     // precompute the end-cap, which will always live next to the dz_s in this mem block
     struct dz_cap_s *cap = _init_cap(0, 0xff, NULL, 0);
+
+    // Save the stack top so we can tell if we flushed correctly.
+    // This isn't quite sufficient to just reconstruct by restoring stored state; we also need curr to go to the right block.
+    // TODO: Just store curr and recreate top/end from it and the known allocation size?
+    dz_mem(self).stack.dz_flush_top = dz_mem(self).stack.top;
     
 	return(self);
 }
@@ -1280,14 +1285,40 @@ void dz_flush(
     // point the mem back at the initial block
 	dz_mem_flush(dz_mem(self));
     
-    // move stack pointers past the dz_s, maybe the qual matrices, and the dz_cap_s that follows
-    void *bottom = (void *)(self + 1);
-    #ifdef DZ_QUAL_ADJ
-        bottom = (void *)(((int8_t *)bottom) + 2 * DZ_QUAL_MATRIX_SIZE);
+    // Re-make the initial allocation, which will re-use any additional memory block it needed.
+    // TODO: Share code with dz_init_intl/dz_qual_adj_init_intl which must match this to be correct.
+    size_t self_and_matrix_size = sizeof(struct dz_s);
+    #if defined(DZ_NUCL_ASCII) || defined(DZ_NUCL_2BIT)
+        #ifdef DZ_QUAL_ADJ
+            self_and_matrix_size += 2 * DZ_QUAL_MATRIX_SIZE;
+        #endif
+    #else
+            self_and_matrix_size += DZ_MAT_SIZE * DZ_MAT_SIZE + 2 * sizeof(__m128i);
     #endif
-    bottom = (void *)(((struct dz_cap_s *)bottom) + 1);
+    size_t cap_size = _calc_next_size(0, 0, 0);
+    dz_mem_stream_reserve(mem, self_and_matrix_size + cap_size);
+
+
+    // Re-allocate self and the matrices
+    struct dz_s *new_self = (struct dz_s *)dz_mem_stream_alloc(dz_mem(self), self_and_matrix_size);
+    if (new_self != self) {
+        dz_error("Lost ourself when resetting memory arena! We should be at %p but actually re-allocated at %p!", self, new_self);
+    }
+    // Re-allocate the head cap (with no forefronts and no writing).
+    // TODO: Must match the behavior of _init_cap
+    if (dz_mem_stream_alloc(dz_mem(self), sizeof(struct dz_head_s)) == NULL) {
+        dz_error("Could not re-allocate cap after self and matrix!");
+    }
+
+    // Now all the stack fields should be right, in particular stack.curr and
+    // stack.end, which are now in the block we had to go to to fit all this,
+    // if DZ_MEM_INIT_SIZE was too small.
     
-	dz_mem(self)->stack.top = (uint8_t *)bottom;
+    if(dz_mem(self).stack.top != dz_mem(self).stack.dz_flush_top) {
+        // We didn't get the right stack top at the end of all that.
+        dz_error("Could not recreate post-init state when flushing! Stack top should be %p but is actually %p!", dz_mem(self).stack.dz_flush_top, dz_mem(self).stack.top);
+    }
+
 	return;
 }
                   
