@@ -556,6 +556,21 @@ uint64_t dz_mem_add_stack(
 }
 
 /*
+ * Dump stack information to standard error.
+ */
+static __dz_force_inline
+void dz_mem_log_stack(
+    struct dz_mem_s *mem)
+{
+    fprintf(stderr, "Dozeu stack blocks:\n");
+    struct dz_mem_block_s *blk = &(mem->blk);
+    while (blk != NULL) {
+        fprintf(stderr, "\t%p\t%lu\n", blk, blk->size);
+        blk = blk->next;
+    }
+}
+
+/*
  * Allocate memory from an arena.
  *
  * Returns NULL if memory could not be allocated.
@@ -1152,7 +1167,7 @@ struct dz_s *dz_init_intl(
     // Save the stack top so we can tell if we flushed correctly.
     // This isn't quite sufficient to just reconstruct by restoring stored state; we also need curr to go to the right block.
     // TODO: Just store curr and recreate top/end from it and the known allocation size?
-    dz_mem(self).stack.dz_flush_top = dz_mem(self).stack.top;
+    dz_mem(self)->stack.dz_flush_top = dz_mem(self)->stack.top;
     
 	return(self);
 }
@@ -1282,6 +1297,9 @@ void dz_flush(
 #endif
 	struct dz_s *self)
 {
+    fprintf(stderr, "Stack before flush:\n");
+    dz_mem_log_stack(dz_mem(self));
+
     // point the mem back at the initial block
 	dz_mem_flush(dz_mem(self));
     
@@ -1296,7 +1314,7 @@ void dz_flush(
             self_and_matrix_size += DZ_MAT_SIZE * DZ_MAT_SIZE + 2 * sizeof(__m128i);
     #endif
     size_t cap_size = _calc_next_size(0, 0, 0);
-    dz_mem_stream_reserve(mem, self_and_matrix_size + cap_size);
+    dz_mem_stream_reserve(dz_mem(self), self_and_matrix_size + cap_size);
 
 
     // Re-allocate self and the matrices
@@ -1314,10 +1332,13 @@ void dz_flush(
     // stack.end, which are now in the block we had to go to to fit all this,
     // if DZ_MEM_INIT_SIZE was too small.
     
-    if(dz_mem(self).stack.top != dz_mem(self).stack.dz_flush_top) {
+    if(dz_mem(self)->stack.top != dz_mem(self)->stack.dz_flush_top) {
         // We didn't get the right stack top at the end of all that.
-        dz_error("Could not recreate post-init state when flushing! Stack top should be %p but is actually %p!", dz_mem(self).stack.dz_flush_top, dz_mem(self).stack.top);
+        dz_error("Could not recreate post-init state when flushing! Stack top should be %p but is actually %p!", dz_mem(self)->stack.dz_flush_top, dz_mem(self)->stack.top);
     }
+
+    fprintf(stderr, "Stack after flush:\n");
+    dz_mem_log_stack(dz_mem(self));
 
 	return;
 }
