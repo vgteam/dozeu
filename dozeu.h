@@ -121,6 +121,12 @@ enum dz_alphabet {
 #define dz_pp_cat(x, y)				dz_pp_cat_intl(x, y)
 #define dz_static_assert(expr)		typedef char dz_pp_cat(_st_, __LINE__)[(expr) ? 1 : -1]
 #define dz_trap()					{ *((volatile uint8_t *)NULL); }
+
+// You can define dz_lost yourself to control what Dozeu does when it gets lost in the traceback matrix and make it e.g. throw an exception.
+#ifndef dz_lost
+    #define dz_lost() dz_trap() 
+#endif
+
 #ifdef DZ_PROTEIN
 	dz_static_assert(DZ_MAT_SIZE <= 32);
 #endif // DZ_PROTEIN
@@ -2420,7 +2426,7 @@ struct dz_alignment_s *dz_trace(
         _match(_idx_asc);
         _ins(_idx_asc);
         _del(_idx_asc);
-        dz_trap();
+        dz_lost();
     }
 _trace_tail:;
 	span++;				/* adjust root span */
