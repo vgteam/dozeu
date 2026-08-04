@@ -1918,8 +1918,8 @@ unittest() {
             } \
         } else { \
             first_drop = w.fr.epos; /* reset the xdrop to indicate that any xdrops we found are not contiguous */ \
+            _store_vector(&cdp[p]); \
         } \
-		_store_vector(&cdp[p]); \
 	} \
     if (first_drop < w.fr.epos) { \
         /* we xdropped a contiguous block of vectors at the end of this column */\
@@ -2386,7 +2386,7 @@ struct dz_alignment_s *dz_trace(
 	}
 	#define _match(_idx) { \
         _debug(M); \
-        if(dz_inside(pcap->r.spos, _vector_idx(idx - 1), pcap->r.epos) \
+        if(dz_inside(pcap->fr.spos, _vector_idx(idx - 1), pcap->fr.epos) \
            && score == (_s(s, pcap, idx - 1) + _pair_score(self, query, rch, idx))) { \
             uint64_t eq = dz_pair_eq(self, query, rch, idx); \
             *--path = DZ_CIGAR_OP>>(eq<<3); cnt[eq]++; \
@@ -2395,9 +2395,9 @@ struct dz_alignment_s *dz_trace(
 		} \
 	}
 	#define _ins(_idx) { \
-		if(dz_inside(cap->r.spos, _vector_idx(idx - 1), cap->r.epos) && score == _s(f, cap, idx)) { \
+		if(dz_inside(cap->fr.spos, _vector_idx(idx - 1), cap->fr.epos) && score == _s(f, cap, idx)) { \
 			_debug(I); \
-			while(_vector_idx(idx - 1) >= cap->r.spos && score != _s(s, cap, idx - 1) - self->gev[0] - self->giv[0]) { \
+			while(_vector_idx(idx - 1) >= cap->fr.spos && score != _s(s, cap, idx - 1) - self->gev[0] - self->giv[0]) { \
 				*--path = (DZ_CIGAR_OP>>16) & 0xff; cnt[2]++; score = _s(f, cap, idx - 1); idx--; _debug(I); \
 			} \
 			*--path = (DZ_CIGAR_OP>>16) & 0xff; cnt[2]++; score = _s(s, cap, idx - 1); idx--; \
@@ -2405,9 +2405,9 @@ struct dz_alignment_s *dz_trace(
 		} \
 	}
 	#define _del(_idx) { \
-		if(dz_inside(pcap->r.spos, _vector_idx(idx), pcap->r.epos) && score == _s(e, cap, idx)) { \
+		if(dz_inside(pcap->fr.spos, _vector_idx(idx), pcap->fr.epos) && score == _s(e, cap, idx)) { \
 			_debug(D); \
-			while(dz_inside(pcap->r.spos, _vector_idx(idx), pcap->r.epos) && score == _s(e, pcap, idx) - self->gev[0]) { \
+			while(dz_inside(pcap->fr.spos, _vector_idx(idx), pcap->fr.epos) && score == _s(e, pcap, idx) - self->gev[0]) { \
                 *--path = (DZ_CIGAR_OP>>24) & 0xff; cnt[3]++; score = _s(e, pcap, idx); _load_prev_cap(e, score, _idx); _debug(D); \
 			} \
             *--path = (DZ_CIGAR_OP>>24) & 0xff; cnt[3]++; score = _s(s, pcap, idx); rch = _load_prev_cap(s, score, _idx); \
