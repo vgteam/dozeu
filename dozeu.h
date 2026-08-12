@@ -246,12 +246,15 @@ struct dz_range_s { uint32_t spos, epos; };
 struct dz_head_s {
 	struct dz_range_s r;
 	uint32_t rch, n_forefronts;
+	uint8_t _pad[16];			// keep size equal to dz_cap_s (relied on by _unwind_cap)
 };
 
 /* followed by dz_forefront_s; range spos and epos are "shared to" (???) forefront_s */
 struct dz_cap_s {
-	struct dz_range_s r;
+	struct dz_range_s r;		// the (wide) range used for cell addressing
 	uint32_t rch; int32_t rrem;
+	struct dz_range_s fr;		// the (narrowed) forward range used to gate traceback; offset matches dz_forefront_s.fr
+	uint8_t _pad[8];
 };
 /*
  * A forefront. Appears at the end of a matrix.
@@ -285,6 +288,8 @@ struct dz_alignment_init_s {
 dz_static_assert(sizeof(struct dz_swgv_s) % sizeof(__m128i) == 0);
 dz_static_assert(sizeof(struct dz_cap_s) % sizeof(__m128i) == 0);
 dz_static_assert(sizeof(struct dz_forefront_s) % sizeof(__m128i) == 0);
+dz_static_assert(sizeof(struct dz_head_s) == sizeof(struct dz_cap_s));
+dz_static_assert(offsetof(struct dz_cap_s, fr) == offsetof(struct dz_forefront_s, fr));
 #define dz_swgv(_p)					( (struct dz_swgv_s *)(_p) )
 #define dz_cswgv(_p)				( (struct dz_swgv_s const *)(_p) )
 #define dz_range(_p)				( (struct dz_range_s *)(_p) )
@@ -882,18 +887,24 @@ unittest() {
  * vector, and save range data after that vector recording the range its slice
  * covers.
  *
+ * The [_spos, _epos) range is the wide range used for cell addressing; the
+ * [_fspos, _fepos) range is the narrowed forward range (after x-drop) used to
+ * gate the traceback. They differ only when x-drop clips the column.
+ *
  * Returns the address of the filled-in range, which it stores in a current
  * allocation, to be made into a cap by _begin_column() or into a forefront by
  * _end_matrix().
  */
-#define _end_column(_p, _spos, _epos) ({ \
+#define _end_column(_p, _spos, _epos, _fspos, _fepos) ({ \
     debug("Ending column"); \
 	/* finish the slice data allocation with what was actually used */ \
 	dz_mem_stream_alloc_end(dz_mem(self), ((_epos) - (_spos)) * sizeof(struct dz_swgv_s)); \
 	/* immediately next in memory, allocate up to a forefront, as a range */ \
 	struct dz_range_s *r = dz_range(dz_mem_stream_alloc_begin(dz_mem(self), sizeof(struct dz_forefront_s))); \
-	debug("create range(%p), [%u, %u)", r, (_spos), (_epos)); \
+	debug("create range(%p), [%u, %u), forward [%u, %u)", r, (_spos), (_epos), (_fspos), (_fepos)); \
 	r->spos = (_spos); r->epos = (_epos); \
+	/* save the narrowed forward range for use in the traceback routine */ \
+	dz_cap(r)->fr.spos = (_fspos); dz_cap(r)->fr.epos = (_fepos); \
 	/* Return it as a cap */ \
 	(struct dz_cap_s *)r; \
 })
@@ -1265,8 +1276,8 @@ struct dz_alignment_init_s dz_align_init(
     }
     w.fr.epos = w.r.epos;
     
-    /* done; create forefront object */
-    _end_column(dp, w.r.spos, w.r.epos);
+    /* done; create forefront object (root column: forward range equals the wide range) */
+    _end_column(dp, w.r.spos, w.r.epos, w.fr.spos, w.fr.epos);
     
     /* package forefront and xt, return */
     struct dz_alignment_init_s aln_init;
@@ -1891,7 +1902,7 @@ unittest() {
 		} \
 	} \
     w.r = w.fr;\
-	_end_column(cdp, w.fr.spos, w.fr.epos); \
+	_end_column(cdp, w.fr.spos, w.fr.epos, w.fr.spos, w.fr.epos); \
 	cdp; \
 })
 #define _fill_column(w, pdp, query, rt, rrem, xt, init_s) ({ \
@@ -1937,8 +1948,8 @@ unittest() {
 		} while(w.fr.epos < query->blen); \
 	} \
 dz_pp_cat(_forefront_, __LINE__):; \
-	/* create cap object that contains [spos, epos) range (for use in the traceback routine) */ \
-	struct dz_cap_s *cap = _end_column(cdp, w.r.spos, w.r.epos); \
+	/* create cap object with the wide range (for addressing) and the narrowed forward range (for the traceback routine) */ \
+	struct dz_cap_s *cap = _end_column(cdp, w.r.spos, w.r.epos, w.fr.spos, w.fr.epos); \
 	int32_t inc = _hmax_vector(maxv); \
 	if(dz_cmp_max(inc, w.inc)) { w.inc = inc; w.mcap = cap; }/* update max; the actual score (absolute score accumulated from the origin) is expressed as max + inc; 2 x cmov */ \
 	/* FIXME: rescue overflow */ \
