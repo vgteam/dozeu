@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
+ *
+ * SPDX-License-Identifier: MIT
+ */
+
 // $(CC) -O3 -march=native -DMAIN -o dozeu dozeu.c
 //#ifdef DZ_QUAL_ADJ
 //#define DEBUG
@@ -246,7 +252,8 @@ struct dz_range_s { uint32_t spos, epos; };
 struct dz_head_s {
 	struct dz_range_s r;
 	uint32_t rch, n_forefronts;
-	uint8_t _pad[16];			// keep size equal to dz_cap_s (relied on by _unwind_cap)
+	struct dz_range_s fr;
+	uint32_t _pad[2]; // keep size equal to dz_cap_s (relied on by _unwind_cap)
 };
 
 /* followed by dz_forefront_s; range spos and epos are "shared to" (???) forefront_s */
@@ -254,7 +261,7 @@ struct dz_cap_s {
 	struct dz_range_s r;		// the (wide) range used for cell addressing
 	uint32_t rch; int32_t rrem;
 	struct dz_range_s fr;		// the (narrowed) forward range used to gate traceback; offset matches dz_forefront_s.fr
-	uint8_t _pad[8];
+	uint32_t _pad[2];
 };
 /*
  * A forefront. Appears at the end of a matrix.
@@ -288,7 +295,10 @@ struct dz_alignment_init_s {
 dz_static_assert(sizeof(struct dz_swgv_s) % sizeof(__m128i) == 0);
 dz_static_assert(sizeof(struct dz_cap_s) % sizeof(__m128i) == 0);
 dz_static_assert(sizeof(struct dz_forefront_s) % sizeof(__m128i) == 0);
+/* _unwind_cap steps back over a head cap by sizeof(struct dz_cap_s) */
 dz_static_assert(sizeof(struct dz_head_s) == sizeof(struct dz_cap_s));
+/* the traceback reads fr through head, cap and forefront pointers interchangeably */
+dz_static_assert(offsetof(struct dz_head_s, fr) == offsetof(struct dz_cap_s, fr));
 dz_static_assert(offsetof(struct dz_cap_s, fr) == offsetof(struct dz_forefront_s, fr));
 #define dz_swgv(_p)					( (struct dz_swgv_s *)(_p) )
 #define dz_cswgv(_p)				( (struct dz_swgv_s const *)(_p) )
@@ -814,6 +824,7 @@ unittest() {
 	(_head)->r.epos = 0;						/* head marked as zero */ \
 	(_head)->rch = (_rch);						/* rch for the first column */ \
 	(_head)->n_forefronts = (_n_forefronts);	/* record n_forefronts */ \
+	(_head)->fr.spos = 0; (_head)->fr.epos = 0;	/* a head caps no column, so it carries no forward range */ \
 	debug("create head cap(%p), n_forefronts(%lu)", _head, (uint64_t)(_n_forefronts)); \
 	dz_cap(_head); \
 })
@@ -888,23 +899,23 @@ unittest() {
  * covers.
  *
  * The [_spos, _epos) range is the wide range used for cell addressing; the
- * [_fspos, _fepos) range is the narrowed forward range (after x-drop) used to
- * gate the traceback. They differ only when x-drop clips the column.
+ * [_fr.spos, _fr.epos) range is the narrowed forward range (after x-drop) used
+ * to gate the traceback. They differ only when x-drop clips the column.
  *
  * Returns the address of the filled-in range, which it stores in a current
  * allocation, to be made into a cap by _begin_column() or into a forefront by
  * _end_matrix().
  */
-#define _end_column(_p, _spos, _epos, _fspos, _fepos) ({ \
+#define _end_column(_p, _spos, _epos, _fr) ({ \
     debug("Ending column"); \
 	/* finish the slice data allocation with what was actually used */ \
 	dz_mem_stream_alloc_end(dz_mem(self), ((_epos) - (_spos)) * sizeof(struct dz_swgv_s)); \
 	/* immediately next in memory, allocate up to a forefront, as a range */ \
 	struct dz_range_s *r = dz_range(dz_mem_stream_alloc_begin(dz_mem(self), sizeof(struct dz_forefront_s))); \
-	debug("create range(%p), [%u, %u), forward [%u, %u)", r, (_spos), (_epos), (_fspos), (_fepos)); \
+	debug("create range(%p), [%u, %u), forward [%u, %u)", r, (_spos), (_epos), (_fr).spos, (_fr).epos); \
 	r->spos = (_spos); r->epos = (_epos); \
-	/* save the narrowed forward range for use in the traceback routine */ \
-	dz_cap(r)->fr.spos = (_fspos); dz_cap(r)->fr.epos = (_fepos); \
+	/* the traceback needs the narrowed forward range as well as the retained one */ \
+	dz_cap(r)->fr = (_fr); \
 	/* Return it as a cap */ \
 	(struct dz_cap_s *)r; \
 })
@@ -1277,7 +1288,7 @@ struct dz_alignment_init_s dz_align_init(
     w.fr.epos = w.r.epos;
     
     /* done; create forefront object (root column: forward range equals the wide range) */
-    _end_column(dp, w.r.spos, w.r.epos, w.fr.spos, w.fr.epos);
+    _end_column(dp, w.r.spos, w.r.epos, w.fr);
     
     /* package forefront and xt, return */
     struct dz_alignment_init_s aln_init;
@@ -1902,7 +1913,7 @@ unittest() {
 		} \
 	} \
     w.r = w.fr;\
-	_end_column(cdp, w.fr.spos, w.fr.epos, w.fr.spos, w.fr.epos); \
+	_end_column(cdp, w.fr.spos, w.fr.epos, w.fr); \
 	cdp; \
 })
 #define _fill_column(w, pdp, query, rt, rrem, xt, init_s) ({ \
@@ -1949,7 +1960,7 @@ unittest() {
 	} \
 dz_pp_cat(_forefront_, __LINE__):; \
 	/* create cap object with the wide range (for addressing) and the narrowed forward range (for the traceback routine) */ \
-	struct dz_cap_s *cap = _end_column(cdp, w.r.spos, w.r.epos, w.fr.spos, w.fr.epos); \
+	struct dz_cap_s *cap = _end_column(cdp, w.r.spos, w.r.epos, w.fr); \
 	int32_t inc = _hmax_vector(maxv); \
 	if(dz_cmp_max(inc, w.inc)) { w.inc = inc; w.mcap = cap; }/* update max; the actual score (absolute score accumulated from the origin) is expressed as max + inc; 2 x cmov */ \
 	/* FIXME: rescue overflow */ \
@@ -2272,7 +2283,8 @@ uint64_t dz_calc_max_qpos(struct dz_forefront_s const *forefront)
 	_init_bonus(forefront->query);
 	struct dz_cap_s const *pcap = forefront->mcap;
 	__m128i const maxv = _mm_set1_epi16(forefront->inc);
-	for(uint64_t p = pcap->r.spos; p < pcap->r.epos; p++) {
+	/* changing this loop as well, since only the forward range can hold the max, and the traceback can only walk within it */
+	for(uint64_t p = pcap->fr.spos; p < pcap->fr.epos; p++) {
 		__m128i const s = _mm_load_si128(&_dp(pcap)[p].s); print_vector(s);
 		uint64_t eq = _mm_movemask_epi8(_mm_cmpeq_epi16(s, maxv));
 		if(eq != 0) {
@@ -2338,7 +2350,8 @@ uint64_t dz_calc_max_pos(struct dz_forefront_s const *forefront)
 			pcap = dz_ccap(ff); \
 			debug("i(%lu), %s(%d, %d), max(%d), inc(%d), [%u, %u)", i, #_l, prev_score, _s(_l, pcap, idx) + (ff->max - ff->inc), ff->max, ff->inc, ff->r.spos, ff->r.epos); \
 			/* adj[i] = w.max - (ffs[i]->max - ffs[i]->inc); base = max - inc */ \
-			if(!dz_inside(pcap->r.spos, _vector_idx(idx), pcap->r.epos)) { debug("out of range(%u), [%u, %u)", _vector_idx(idx), pcap->r.spos, pcap->r.epos); continue; } \
+			/* This is also needed for correctly respecting the band boundaries during traceback. Else out of band columns may be merged incorrectly */ \
+			if(!dz_inside(pcap->fr.spos, _vector_idx(idx), pcap->fr.epos)) { debug("out of range(%u), [%u, %u)", _vector_idx(idx), pcap->fr.spos, pcap->fr.epos); continue; } \
 			if(prev_score == _s(_l, pcap, idx) + (ff->max - ff->inc)) { debug("found, i(%lu), id(%u), prev_score(%d), score(%d), max(%d), inc(%d)", i, dz_cff(pcap)->rid, prev_score, _s(_l, pcap, idx), ff->max, ff->inc); break; } \
 		} \
 		_push_span(dz_cff(pcap)->rid);								/* push segment info */ \
