@@ -170,4 +170,4 @@ I would like to give thank to Erik Garrison for his description on the internals
 
 MIT
 
-Copyright 2018, Hajime Suzuki
+Copyright: see LICENSE file
